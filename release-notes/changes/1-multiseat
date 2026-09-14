@@ -1,0 +1,1 @@
+multiseat: XInput2 master pointer/keyboard pairs can be grouped into seats, each with its own focus (see the seat directive, the seat command and the GET_SEATS IPC message)

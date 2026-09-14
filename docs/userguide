@@ -1381,6 +1381,83 @@ focus::
 none::
     The window will neither be focused, nor be marked urgent.
 
+[[multiseat]]
+=== Multiseat
+
+With XInput2 (MPX), an X server can drive several independent pointer/keyboard
+pairs ("master devices", created with +xinput create-master <name>+). i3
+groups such pairs into *seats*: every seat has its own focused window and its
+own keyboard focus, so two people (or a keyboard and a touchscreen) can work
+in different windows at the same time. Mouse bindings, +focus_follows_mouse+,
++mouse_warping+ and key bindings all act on the seat whose device produced
+the input, and each seat's keyboard keeps its own modifier state and XKB
+layout group.
+
+Every master pair not claimed by a seat belongs to the implicit +default+ seat,
+which also owns the "Virtual core" pair (+core+). Seats are free-roaming by
+default: they may focus windows on every output. A seat can instead be
+restricted to some outputs, or be inactive (no outputs): an inactive seat's
+pointer clicks, scrolls and drags windows without ever changing focus, and its
+keyboard follows the default seat's focus. Two seats may focus the same window,
+in which case both of their inputs reach it; when a seat is removed, the other
+seats keep their focus.
+
+The window layout itself is shared: the last seat to act decides which
+workspace an output shows and which tab is visible. If another seat hides the
+workspace a seat was working on, that seat follows to the newly shown
+workspace, since an unmapped window cannot hold keyboard focus.
+
+*Syntax*:
+-------------------------------------------------
+seat <name> input <master> [<master> …]
+seat <name> output all|none|<output> [<output> …]
+-------------------------------------------------
+
++<master>+ is the name given to +xinput create-master+ (i3 resolves
+"<master> pointer" and "<master> keyboard"); +core+ stands for the Virtual
+core pair. Master devices may appear or disappear at any time, i3 picks them
+up when they do. Without an +output+ line, a seat may focus every output; an
+empty output list or +none+ makes it inactive.
+
+*Examples*:
+-------------------------------------------------
+# A touchscreen (xinput create-master touch) that must never steal focus
+seat touch input touch
+seat touch output none
+
+# A second user with their own keyboard and mouse on the second monitor
+seat guest input guest
+seat guest output HDMI-2
+-------------------------------------------------
+
+Seats can also be changed at runtime:
+
+*Syntax*:
+-------------------------------------------------
+seat <name>
+seat <name> <command>
+seat <name> input <master> [<master> …]
+seat <name> output all|none|<output> [<output> …]
+seat <name> remove
+-------------------------------------------------
+
+Commands sent via IPC run as the seat which most recently produced input;
++seat <name>+ makes the rest of the command string run as +<name>+ instead,
+and +seat <name> <command>+ runs a single command as that seat. +seat <name>
+remove+ hands the seat's devices back to the default seat.
+
+*Examples*:
+-------------------------------------------------
+i3-msg 'seat guest focus left'
+i3-msg 'seat guest; workspace 3; exec xterm'
+i3-msg 'seat guest input guest; seat guest output HDMI-2'
+i3-msg 'seat guest remove'
+-------------------------------------------------
+
+Programs started with +exec+ are placed next to the focus of the seat which
+ran the command (via startup notifications). See <<_get_seats_reply,the
+GET_SEATS IPC message>> for querying seats.
+
 [[show_marks]]
 === Drawing marks on window decoration
 
