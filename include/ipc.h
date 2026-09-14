@@ -135,7 +135,7 @@ void ipc_send_window_focus_event(Con *con, Seat *seat);
 
 /**
  * Sends a seat event: "change" says what happened (new, remove, input,
- * output, devices) and "seat" is the affected seat (or null).
+ * output, focus, devices) and "seat" is the affected seat (or null).
  *
  */
 void ipc_send_seat_event(const char *change, Seat *seat);

@@ -80,6 +80,7 @@ Seat *seat_new(struct seats_head *list, const char *name) {
     seat->name = sstrdup(name);
     TAILQ_INIT(&(seat->inputs));
     SLIST_INIT(&(seat->outputs));
+    seat->focus_enabled = true;
     seat->output_mode = SEAT_OUTPUTS_ALL;
     TAILQ_INSERT_TAIL(list, seat, seats);
     return seat;
@@ -169,6 +170,7 @@ static void seat_copy_config(Seat *to, Seat *from) {
         seat_add_input(&seats, to, input->name);
     }
 
+    to->focus_enabled = from->focus_enabled;
     seat_set_output_mode(to, from->output_mode);
     struct output_name *output;
     SLIST_FOREACH (output, &(from->outputs), names) {
@@ -379,15 +381,12 @@ xcb_input_device_id_t seat_keyboard_for_pointer(xcb_input_device_id_t pointer) {
 }
 
 bool seat_is_inactive(Seat *seat) {
-    return seat->output_mode == SEAT_OUTPUTS_NONE;
+    return !seat->focus_enabled;
 }
 
 bool seat_owns_output(Seat *seat, Con *output_con) {
     if (seat->output_mode == SEAT_OUTPUTS_ALL) {
         return true;
-    }
-    if (seat->output_mode == SEAT_OUTPUTS_NONE) {
-        return false;
     }
 
     struct output_name *name;
@@ -401,11 +400,11 @@ bool seat_owns_output(Seat *seat, Con *output_con) {
 }
 
 bool seat_may_focus(Seat *seat, Con *con) {
+    if (!seat->focus_enabled) {
+        return false;
+    }
     if (seat->output_mode == SEAT_OUTPUTS_ALL) {
         return true;
-    }
-    if (seat->output_mode == SEAT_OUTPUTS_NONE) {
-        return false;
     }
     return seat_owns_output(seat, con_get_output(con));
 }

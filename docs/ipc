@@ -942,17 +942,18 @@ following properties:
 name (string)::
 	The name of the seat, as used in the +seat+ configuration directive
 	and commands.
-active (boolean)::
-	Whether the seat may focus windows at all. An inactive seat (no
-	outputs) never changes focus; its keyboards follow the default seat.
+focus_enabled (boolean)::
+	Whether the seat may focus windows at all (+seat <name> focus
+	enabled|disabled+). With focus disabled, the seat never changes focus
+	and its keyboards follow the default seat.
 inputs (array of map)::
 	The master device pairs of the seat: +name+ (string) is the
 	+xinput create-master+ name (or +core+), +pointer+ and +keyboard+
 	(integer) are the XInput2 device ids of the master pointer and master
 	keyboard, or null while no such master device exists.
 outputs (string or array of string)::
-	+"all"+ if the seat may focus every output, +"none"+ if it is inactive,
-	otherwise the list of output names it is restricted to.
+	+"all"+ if the seat may focus every output, otherwise the list of
+	output names it is restricted to.
 focused (integer)::
 	The +id+ (see the TREE reply) of the container this seat focuses, or
 	null.
@@ -964,7 +965,7 @@ workspace (string)::
 [
  {
   "name": "default",
-  "active": true,
+  "focus_enabled": true,
   "inputs": [ { "name": "core", "pointer": 2, "keyboard": 3 } ],
   "outputs": "all",
   "focused": 94133390560720,
@@ -972,9 +973,9 @@ workspace (string)::
  },
  {
   "name": "touch",
-  "active": false,
+  "focus_enabled": false,
   "inputs": [ { "name": "touch", "pointer": 12, "keyboard": 13 } ],
-  "outputs": "none",
+  "outputs": [ "DP-1-1" ],
   "focused": 94133390560720,
   "workspace": "1"
  }
@@ -1271,6 +1272,7 @@ This event consists of a single serialized map containing a property
 * +remove+ – a seat was removed; its devices went back to the default seat
 * +input+ – the seat's inputs changed
 * +output+ – the seat's outputs changed
+* +focus+ – the seat's focus was enabled or disabled
 * +devices+ – master devices appeared or disappeared, so the device ids of
   the seats' inputs may have changed
 
@@ -1282,10 +1284,10 @@ re-request GET_SEATS after any seat event.
 *Example:*
 --------------------------------------------------------------------------------
 {
- "change": "output",
+ "change": "focus",
  "seat": {
   "name": "touch",
-  "active": true,
+  "focus_enabled": true,
   "inputs": [ { "name": "touch", "pointer": 12, "keyboard": 13 } ],
   "outputs": "all",
   "focused": 94133390560720,

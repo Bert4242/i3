@@ -624,9 +624,9 @@ CFGFUN(seat_output, const char *seat, const char *output) {
         return;
     }
     if (output == NULL) {
-        /* `seat <name> output` with no outputs at all means inactive. */
+        /* `seat <name> output` with no outputs at all means no restriction. */
         if (!current_seat_list_started) {
-            seat_set_output_mode(target, SEAT_OUTPUTS_NONE);
+            seat_set_output_mode(target, SEAT_OUTPUTS_ALL);
         }
         return;
     }
@@ -638,16 +638,21 @@ CFGFUN(seat_output, const char *seat, const char *output) {
         seat_set_output_mode(target, SEAT_OUTPUTS_ALL);
         return;
     }
-    if (strcasecmp(output, "none") == 0) {
-        seat_set_output_mode(target, SEAT_OUTPUTS_NONE);
-        return;
-    }
     if (target->output_mode != SEAT_OUTPUTS_NAMED) {
-        /* A name after "all"/"none" switches back to a named list. */
+        /* A name after "all" switches back to a named list. */
         seat_set_output_mode(target, SEAT_OUTPUTS_NAMED);
     }
     DLOG("Assigning output \"%s\" to seat \"%s\"\n", output, target->name);
     seat_add_output(target, output);
+}
+
+CFGFUN(seat_focus, const char *seat, const char *value) {
+    Seat *target = cfg_seat_get(seat);
+    if (target == NULL) {
+        return;
+    }
+    target->focus_enabled = (strcasecmp(value, "disabled") != 0 && boolstr(value));
+    DLOG("Seat \"%s\": focus %s\n", target->name, target->focus_enabled ? "enabled" : "disabled");
 }
 
 CFGFUN(ipc_socket, const char *path) {

@@ -1396,11 +1396,12 @@ layout group.
 Every master pair not claimed by a seat belongs to the implicit +default+ seat,
 which also owns the "Virtual core" pair (+core+). Seats are free-roaming by
 default: they may focus windows on every output. A seat can instead be
-restricted to some outputs, or be inactive (no outputs): an inactive seat's
-pointer clicks, scrolls and drags windows without ever changing focus, and its
-keyboard follows the default seat's focus. Two seats may focus the same window,
-in which case both of their inputs reach it; when a seat is removed, the other
-seats keep their focus.
+restricted to some outputs. Independently of that, a seat's focus can be
+disabled: its pointer then clicks, scrolls and drags windows without ever
+changing focus, and its keyboard follows the default seat's focus (the output
+restriction is kept for when focus is enabled again). Two seats may focus the
+same window, in which case both of their inputs reach it; when a seat is
+removed, the other seats keep their focus.
 
 The window layout itself is shared: the last seat to act decides which
 workspace an output shows and which tab is visible. If another seat hides the
@@ -1410,20 +1411,21 @@ workspace, since an unmapped window cannot hold keyboard focus.
 *Syntax*:
 -------------------------------------------------
 seat <name> input <master> [<master> …]
-seat <name> output all|none|<output> [<output> …]
+seat <name> output all|<output> [<output> …]
+seat <name> focus enabled|disabled
 -------------------------------------------------
 
 +<master>+ is the name given to +xinput create-master+ (i3 resolves
 "<master> pointer" and "<master> keyboard"); +core+ stands for the Virtual
 core pair. Master devices may appear or disappear at any time, i3 picks them
-up when they do. Without an +output+ line, a seat may focus every output; an
-empty output list or +none+ makes it inactive.
+up when they do. Without an +output+ line, a seat may focus every output.
+Focus is enabled by default; it cannot be disabled for the +default+ seat.
 
 *Examples*:
 -------------------------------------------------
 # A touchscreen (xinput create-master touch) that must never steal focus
 seat touch input touch
-seat touch output none
+seat touch focus disabled
 
 # A second user with their own keyboard and mouse on the second monitor
 seat guest input guest
@@ -1437,20 +1439,24 @@ Seats can also be changed at runtime:
 seat <name>
 seat <name> <command>
 seat <name> input <master> [<master> …]
-seat <name> output all|none|<output> [<output> …]
+seat <name> output all|<output> [<output> …]
+seat <name> focus enabled|disabled|toggle
 seat <name> remove
 -------------------------------------------------
 
 Commands sent via IPC run as the seat which most recently produced input;
 +seat <name>+ makes the rest of the command string run as +<name>+ instead,
-and +seat <name> <command>+ runs a single command as that seat. +seat <name>
-remove+ hands the seat's devices back to the default seat.
+and +seat <name> <command>+ runs a single command as that seat (+seat <name>
+focus left+ therefore runs the +focus left+ command, while +seat <name> focus
+enabled|disabled|toggle+ is the focus switch). +seat <name> remove+ hands the
+seat's devices back to the default seat.
 
 *Examples*:
 -------------------------------------------------
 i3-msg 'seat guest focus left'
 i3-msg 'seat guest; workspace 3; exec xterm'
 i3-msg 'seat guest input guest; seat guest output HDMI-2'
+i3-msg 'seat touch focus toggle'
 i3-msg 'seat guest remove'
 -------------------------------------------------
 

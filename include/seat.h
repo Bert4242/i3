@@ -37,9 +37,6 @@ struct seat_input {
 typedef enum {
     /** The seat may focus containers on every output (the default). */
     SEAT_OUTPUTS_ALL = 0,
-    /** The seat is inactive: its pointer never focuses anything and its
-     * keyboards follow the default seat's focus. */
-    SEAT_OUTPUTS_NONE,
     /** The seat may only focus containers on the outputs in `outputs`. */
     SEAT_OUTPUTS_NAMED,
 } seat_output_mode_t;
@@ -48,6 +45,12 @@ typedef struct Seat {
     char *name;
 
     TAILQ_HEAD(seat_inputs_head, seat_input) inputs;
+
+    /** Whether the seat may focus anything at all (default: yes). With
+     * focus disabled, its pointer clicks/scrolls/drags windows without ever
+     * changing focus and its keyboards follow the default seat's focus;
+     * the output scope below is kept for when focus is enabled again. */
+    bool focus_enabled;
 
     seat_output_mode_t output_mode;
     SLIST_HEAD(seat_outputs_head, output_name) outputs;
@@ -220,15 +223,15 @@ xcb_input_device_id_t seat_keyboard_for_pointer(xcb_input_device_id_t pointer);
 bool seat_owns_output(Seat *seat, Con *output);
 
 /**
- * Returns true if the seat may focus the given container: always for a free
- * roaming seat, never for an inactive seat, and only on its own outputs for
+ * Returns true if the seat may focus the given container: never with focus
+ * disabled, always for a free roaming seat, and only on its own outputs for
  * a restricted seat.
  *
  */
 bool seat_may_focus(Seat *seat, Con *con);
 
 /**
- * Returns true if the seat is inactive (has no outputs).
+ * Returns true if the seat has focus disabled (see focus_enabled).
  *
  */
 bool seat_is_inactive(Seat *seat);

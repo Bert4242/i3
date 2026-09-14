@@ -360,13 +360,14 @@ state WORKSPACE_OUTPUT_WORD:
       -> INITIAL
 
 # seat <name> input <master> [<master> …]
-# seat <name> output all|none|<output> [<output> …]
+# seat <name> output all|<output> [<output> …]
+# seat <name> focus enabled|disabled
 #
 # Declares a multiseat seat: a group of `xinput create-master` pairs (each
 # <master> is the create-master name, "core" being the Virtual core pair)
 # which has its own focus. Without an output line a seat may focus windows
-# on every output; "none" (or an empty output list) makes it inactive, its
-# pointer then never changes focus.
+# on every output. With focus disabled, the seat's pointer never changes
+# focus and its keyboards follow the default seat.
 state SEAT:
   seat = word
       -> SEAT_ACTION
@@ -376,6 +377,12 @@ state SEAT_ACTION:
       -> SEAT_INPUT_WORD
   'output'
       -> SEAT_OUTPUT_WORD
+  'focus'
+      -> SEAT_FOCUS
+
+state SEAT_FOCUS:
+  value = word
+      -> call cfg_seat_focus($seat, $value)
 
 state SEAT_INPUT_WORD:
   input = word

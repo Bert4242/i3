@@ -68,6 +68,7 @@ CFGFUN(assign, const char *workspace, bool is_number);
 CFGFUN(no_focus);
 CFGFUN(seat_input, const char *seat, const char *input);
 CFGFUN(seat_output, const char *seat, const char *output);
+CFGFUN(seat_focus, const char *seat, const char *value);
 CFGFUN(ipc_socket, const char *path);
 CFGFUN(ipc_kill_timeout, const long timeout_ms);
 CFGFUN(tiling_drag, const char *value);

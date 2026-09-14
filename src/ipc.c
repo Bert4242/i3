@@ -1436,8 +1436,8 @@ IPC_HANDLER(get_binding_state) {
 }
 
 /*
- * Serializes one seat: its name, whether it is active (has outputs), its
- * inputs with their resolved device ids, its outputs and its focus.
+ * Serializes one seat: its name, whether its focus is enabled, its inputs
+ * with their resolved device ids, its outputs and its focus.
  *
  */
 static void dump_seat(yajl_gen gen, Seat *seat) {
@@ -1446,8 +1446,8 @@ static void dump_seat(yajl_gen gen, Seat *seat) {
     ystr("name");
     ystr(seat->name);
 
-    ystr("active");
-    y(bool, !seat_is_inactive(seat));
+    ystr("focus_enabled");
+    y(bool, seat->focus_enabled);
 
     ystr("inputs");
     y(array_open);
@@ -1475,8 +1475,6 @@ static void dump_seat(yajl_gen gen, Seat *seat) {
     ystr("outputs");
     if (seat->output_mode == SEAT_OUTPUTS_ALL) {
         ystr("all");
-    } else if (seat->output_mode == SEAT_OUTPUTS_NONE) {
-        ystr("none");
     } else {
         y(array_open);
         struct output_name *output;
@@ -1800,7 +1798,7 @@ void ipc_send_window_focus_event(Con *con, Seat *seat) {
 
 /*
  * Sends a seat event: "change" says what happened (new, remove, input,
- * output, devices) and "seat" is the affected seat (or null).
+ * output, focus, devices) and "seat" is the affected seat (or null).
  */
 void ipc_send_seat_event(const char *change, Seat *seat) {
     DLOG("Issue IPC seat %s event (seat = %s)\n", change, seat ? seat->name : "(null)");

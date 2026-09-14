@@ -176,9 +176,9 @@ static void x_set_seat_client_pointer(Seat *seat, xcb_window_t window) {
  *
  */
 static void x_push_seat_focus(Seat *seat) {
-    /* An inactive seat's keyboards follow the default seat; track that as
-     * its own focus too, so that it starts from something current if it is
-     * later given outputs. */
+    /* The keyboards of a seat with focus disabled follow the default seat;
+     * track that as its own focus too, so that it starts from something
+     * current if its focus is enabled later. */
     if (seat_is_inactive(seat) && default_seat->focused != NULL) {
         if (seat->focused != default_seat->focused) {
             seat->focused = default_seat->focused;

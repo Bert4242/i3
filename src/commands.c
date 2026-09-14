@@ -2653,7 +2653,7 @@ void cmd_seat_output(I3_CMD, const char *seat, const char *output) {
 
     if (output == NULL) {
         if (!cmd_seat_list_started) {
-            seat_set_output_mode(target, SEAT_OUTPUTS_NONE);
+            seat_set_output_mode(target, SEAT_OUTPUTS_ALL);
         }
         ipc_send_seat_event("output", target);
         cmd_output->needs_tree_render = true;
@@ -2669,15 +2669,41 @@ void cmd_seat_output(I3_CMD, const char *seat, const char *output) {
         seat_set_output_mode(target, SEAT_OUTPUTS_ALL);
         return;
     }
-    if (strcasecmp(output, "none") == 0) {
-        seat_set_output_mode(target, SEAT_OUTPUTS_NONE);
-        return;
-    }
     if (target->output_mode != SEAT_OUTPUTS_NAMED) {
         seat_set_output_mode(target, SEAT_OUTPUTS_NAMED);
     }
     DLOG("Assigning output \"%s\" to seat \"%s\"\n", output, target->name);
     seat_add_output(target, output);
+}
+
+/*
+ * Implementation of 'seat <name> focus enabled|disabled|toggle'.
+ *
+ */
+void cmd_seat_focus(I3_CMD, const char *seat, const char *mode) {
+    Seat *target = seat_by_name(seat);
+    if (target == NULL) {
+        yerror("No such seat: %s", seat);
+        return;
+    }
+
+    bool enable;
+    if (strcmp(mode, "focus toggle") == 0) {
+        enable = !target->focus_enabled;
+    } else {
+        enable = (strcmp(mode, "focus enabled") == 0);
+    }
+    if (!enable && target == default_seat) {
+        yerror("Focus cannot be disabled for the default seat");
+        return;
+    }
+
+    DLOG("Seat \"%s\": focus %s\n", target->name, enable ? "enabled" : "disabled");
+    target->focus_enabled = enable;
+    seat_invalidate_focus_ids();
+    ipc_send_seat_event("focus", target);
+    cmd_output->needs_tree_render = true;
+    ysuccess(true);
 }
 
 /*
