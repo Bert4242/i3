@@ -417,6 +417,7 @@ i3srcs = [
   'src/sync.c',
   'src/tiling_drag.c',
   'src/tree.c',
+  'src/seat.c',
   'src/util.c',
   'src/version.c',
   'src/window.c',

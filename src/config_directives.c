@@ -574,10 +574,80 @@ CFGFUN(workspace, const char *workspace, const char *output) {
     TAILQ_INSERT_TAIL(&ws_assignments, assignment, ws_assignments);
 }
 
-CFGFUN(focus_ignore_pointer, const char *devicename) {
-    struct focus_ignore_pointer *ignored = scalloc(1, sizeof(struct focus_ignore_pointer));
-    ignored->name = sstrdup(devicename);
-    TAILQ_INSERT_TAIL(&focus_ignore_pointers, ignored, focus_ignore_pointers);
+/* Like current_workspace above: the parser clears its stack after the first
+ * call, so the seat name only arrives with the first word of a list. */
+static char *current_seat_name = NULL;
+static bool current_seat_list_started = false;
+
+static Seat *cfg_seat_get(const char *seat) {
+    if (seat) {
+        FREE(current_seat_name);
+        current_seat_name = sstrdup(seat);
+        current_seat_list_started = false;
+    } else if (!current_seat_name) {
+        DLOG("Both seat and current_seat_name are NULL, assuming we had an error before\n");
+        return NULL;
+    }
+
+    Seat *result = NULL;
+    Seat *walk;
+    TAILQ_FOREACH (walk, &seat_configs, seats) {
+        if (strcmp(walk->name, current_seat_name) == 0) {
+            result = walk;
+        }
+    }
+    if (result == NULL) {
+        result = seat_new(&seat_configs, current_seat_name);
+    }
+    return result;
+}
+
+CFGFUN(seat_input, const char *seat, const char *input) {
+    Seat *target = cfg_seat_get(seat);
+    if (target == NULL) {
+        return;
+    }
+    if (!current_seat_list_started) {
+        seat_clear_inputs(target);
+        current_seat_list_started = true;
+    }
+    if (input == NULL) {
+        return;
+    }
+    DLOG("Assigning input \"%s\" to seat \"%s\"\n", input, target->name);
+    seat_add_input(&seat_configs, target, input);
+}
+
+CFGFUN(seat_output, const char *seat, const char *output) {
+    Seat *target = cfg_seat_get(seat);
+    if (target == NULL) {
+        return;
+    }
+    if (output == NULL) {
+        /* `seat <name> output` with no outputs at all means inactive. */
+        if (!current_seat_list_started) {
+            seat_set_output_mode(target, SEAT_OUTPUTS_NONE);
+        }
+        return;
+    }
+    if (!current_seat_list_started) {
+        seat_set_output_mode(target, SEAT_OUTPUTS_NAMED);
+        current_seat_list_started = true;
+    }
+    if (strcasecmp(output, "all") == 0) {
+        seat_set_output_mode(target, SEAT_OUTPUTS_ALL);
+        return;
+    }
+    if (strcasecmp(output, "none") == 0) {
+        seat_set_output_mode(target, SEAT_OUTPUTS_NONE);
+        return;
+    }
+    if (target->output_mode != SEAT_OUTPUTS_NAMED) {
+        /* A name after "all"/"none" switches back to a named list. */
+        seat_set_output_mode(target, SEAT_OUTPUTS_NAMED);
+    }
+    DLOG("Assigning output \"%s\" to seat \"%s\"\n", output, target->name);
+    seat_add_output(target, output);
 }
 
 CFGFUN(ipc_socket, const char *path) {

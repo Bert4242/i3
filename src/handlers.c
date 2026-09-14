@@ -1503,7 +1503,7 @@ void handle_event(int type, xcb_generic_event_t *event) {
              * events via xinput_handle_event() above instead (see
              * xinput.c), so this case does not fire for them anymore.
              * XCB_INPUT_DEVICE_ALL_MASTER is a reserved XInput2 device id
-             * that can never match a resolved focus_ignore_pointer device,
+             * that can never match a resolved seat device,
              * so it's a safe "not applicable" placeholder deviceid for
              * this core-protocol fallback path. */
             handle_button_press((xcb_button_press_event_t *)event, XCB_INPUT_DEVICE_ALL_MASTER);

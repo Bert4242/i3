@@ -166,15 +166,16 @@ static void allow_replay_pointer(xcb_timestamp_t time, xcb_input_device_id_t dev
 }
 
 /*
- * Focuses con_to_focus unless the click originated from a pointer device
- * configured via focus_ignore_pointer, in which case i3's focus is left
- * untouched (the click/drag/scroll still reaches the window normally via
- * the replay/pass-through logic in route_click()).
+ * Focuses con_to_focus unless the seat owning the clicking pointer may not
+ * focus it (inactive seat, or a seat restricted to other outputs), in which
+ * case i3's focus is left untouched (the click/drag/scroll still reaches the
+ * window normally via the replay/pass-through logic in route_click()).
  *
  */
 static void activate_unless_ignored(Con *con_to_focus, xcb_input_device_id_t deviceid) {
-    if (xinput_pointer_is_ignored(deviceid)) {
-        DLOG("Not focusing con %p, click originated from an ignored XInput2 pointer device (%d)\n", con_to_focus, deviceid);
+    Seat *seat = seat_for_device(deviceid);
+    if (!seat_may_focus(seat, con_to_focus)) {
+        DLOG("Not focusing con %p, seat \"%s\" (device %d) may not focus it\n", con_to_focus, seat->name, deviceid);
         return;
     }
     con_activate(con_to_focus);

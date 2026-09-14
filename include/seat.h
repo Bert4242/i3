@@ -1,0 +1,204 @@
+/*
+ * vim:ts=4:sw=4:expandtab
+ *
+ * i3 - an improved tiling window manager
+ * © 2009 Michael Stapelberg and contributors (see also: LICENSE)
+ *
+ * seat.h: Multiseat support. A seat is a named group of XInput2 master
+ * pointer/keyboard pairs which has its own focused container and its own X11
+ * keyboard focus, so that several people (or a keyboard and a touchscreen)
+ * can drive different windows at the same time.
+ *
+ */
+#pragma once
+
+#include <config.h>
+
+#include <xcb/xinput.h>
+
+#include "data.h"
+
+/** One `xinput create-master <name>` pair belonging to a seat. The master
+ * pointer is named "<name> pointer" and its paired master keyboard
+ * "<name> keyboard"; the special name "core" stands for the Virtual core
+ * pointer/keyboard pair. */
+struct seat_input {
+    char *name;
+    /** Resolved XInput2 master device ids, or SEAT_DEVICE_NONE while the
+     * master does not exist on the server. */
+    xcb_input_device_id_t pointer;
+    xcb_input_device_id_t keyboard;
+
+    TAILQ_ENTRY(seat_input) inputs;
+};
+
+#define SEAT_DEVICE_NONE ((xcb_input_device_id_t)0)
+
+typedef enum {
+    /** The seat may focus containers on every output (the default). */
+    SEAT_OUTPUTS_ALL = 0,
+    /** The seat is inactive: its pointer never focuses anything and its
+     * keyboards follow the default seat's focus. */
+    SEAT_OUTPUTS_NONE,
+    /** The seat may only focus containers on the outputs in `outputs`. */
+    SEAT_OUTPUTS_NAMED,
+} seat_output_mode_t;
+
+typedef struct Seat {
+    char *name;
+
+    TAILQ_HEAD(seat_inputs_head, seat_input) inputs;
+
+    seat_output_mode_t output_mode;
+    SLIST_HEAD(seat_outputs_head, output_name) outputs;
+
+    /** The container this seat has focused. Mirrors the global `focused`
+     * while this seat is the current seat, see seat_make_current(). */
+    Con *focused;
+    /** X11 window which currently holds this seat's keyboard focus (or which
+     * we last asked the server to focus); XCB_NONE forces a refocus. */
+    xcb_window_t focused_id;
+    /** Last X11 window we actually focused, kept separately because
+     * focused_id gets reset to XCB_NONE to force a refocus. */
+    xcb_window_t last_focused;
+    /** Where to warp this seat's pointer in the next x_push_changes(). */
+    Rect *warp_to;
+    /** Current XKB group of this seat's keyboards. */
+    int xkb_group;
+
+    TAILQ_ENTRY(Seat) seats;
+} Seat;
+
+/** All runtime seats, the implicit default seat always being first. */
+extern TAILQ_HEAD(seats_head, Seat) seats;
+
+/** Seats declared in the configuration file (via the seat directive). Turned
+ * into runtime seats by seat_apply_config(). */
+extern struct seats_head seat_configs;
+
+/** The implicit seat which owns the Virtual core pointer/keyboard pair and
+ * every master device not claimed by another seat. */
+extern Seat *default_seat;
+
+/** The seat whose input event or command is currently being handled. The
+ * global `focused` always belongs to this seat. */
+extern Seat *current_seat;
+
+/** The seat which most recently produced device input. Commands which arrive
+ * without a device (IPC) run as this seat. */
+extern Seat *last_active_seat;
+
+/**
+ * Creates the default seat. Must run before the configuration is loaded and
+ * before any focus is set.
+ *
+ */
+void seat_init(void);
+
+/**
+ * Returns the runtime seat with the given name, or NULL.
+ *
+ */
+Seat *seat_by_name(const char *name);
+
+/**
+ * Allocates a seat with the given name and no inputs/outputs (output mode
+ * SEAT_OUTPUTS_ALL) and appends it to the given list.
+ *
+ */
+Seat *seat_new(struct seats_head *list, const char *name);
+
+/**
+ * Appends an input (an `xinput create-master` name, or "core") to the seat.
+ * The input is removed from any other seat in the same list first, since a
+ * master pair belongs to exactly one seat.
+ *
+ */
+void seat_add_input(struct seats_head *list, Seat *seat, const char *input);
+
+/**
+ * Removes all inputs from the seat.
+ *
+ */
+void seat_clear_inputs(Seat *seat);
+
+/**
+ * Sets the output mode of a seat. For SEAT_OUTPUTS_NAMED, call
+ * seat_add_output() afterward for every output name.
+ *
+ */
+void seat_set_output_mode(Seat *seat, seat_output_mode_t mode);
+
+/**
+ * Appends an output name to a SEAT_OUTPUTS_NAMED seat.
+ *
+ */
+void seat_add_output(Seat *seat, const char *output);
+
+/**
+ * Frees a seat and everything it owns. The seat must already be unlinked
+ * from its list.
+ *
+ */
+void seat_free(Seat *seat);
+
+/**
+ * Turns the seats declared in the configuration into runtime seats:
+ * existing seats with the same name get the configured inputs/outputs,
+ * new ones are created, and seats which are neither configured anymore nor
+ * the default seat are removed. Resolves devices afterward.
+ *
+ */
+void seat_apply_config(void);
+
+/**
+ * Removes a runtime seat. Its inputs go back to the default seat. The
+ * default seat cannot be removed.
+ *
+ */
+void seat_remove(Seat *seat);
+
+/**
+ * (Re-)resolves the master device ids of every seat input from the master
+ * devices currently known to the X server. Call after XIHierarchyChanged,
+ * after a config reload and after seat inputs were changed at runtime.
+ *
+ */
+void seat_resolve_devices(void);
+
+/**
+ * Returns the seat which owns the given XInput2 master device (pointer or
+ * keyboard). Unknown devices (including the XCB_INPUT_DEVICE_ALL_MASTER
+ * placeholder used for core-protocol fallback events) belong to the default
+ * seat.
+ *
+ */
+Seat *seat_for_device(xcb_input_device_id_t deviceid);
+
+/**
+ * Returns the master keyboard paired with the given master pointer, or
+ * SEAT_DEVICE_NONE if the pointer is not known.
+ *
+ */
+xcb_input_device_id_t seat_keyboard_for_pointer(xcb_input_device_id_t pointer);
+
+/**
+ * Returns true if the seat may focus containers on the given output
+ * container (CT_OUTPUT).
+ *
+ */
+bool seat_owns_output(Seat *seat, Con *output);
+
+/**
+ * Returns true if the seat may focus the given container: always for a free
+ * roaming seat, never for an inactive seat, and only on its own outputs for
+ * a restricted seat.
+ *
+ */
+bool seat_may_focus(Seat *seat, Con *con);
+
+/**
+ * Returns true if the seat is inactive (has no outputs).
+ *
+ */
+bool seat_is_inactive(Seat *seat);

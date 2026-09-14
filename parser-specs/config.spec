@@ -57,7 +57,7 @@ state INITIAL:
   'restart_state'                          -> RESTART_STATE
   'popup_during_fullscreen'                -> POPUP_DURING_FULLSCREEN
   'tiling_drag'                            -> TILING_DRAG
-  'focus_ignore_pointer'                   -> FOCUS_IGNORE_POINTER
+  'seat'                                   -> SEAT
   exectype = 'exec_always', 'exec'         -> EXEC
   colorclass = 'client.background'
       -> COLOR_SINGLE
@@ -359,17 +359,35 @@ state WORKSPACE_OUTPUT_WORD:
   end
       -> INITIAL
 
-# focus_ignore_pointer <device name>
+# seat <name> input <master> [<master> …]
+# seat <name> output all|none|<output> [<output> …]
 #
-# Marks an XInput2 master pointer (as named by, e.g., `xinput list`) as one
-# whose clicks/drags/scrolls should reach the window under it as normal,
-# but never change i3's focus. Repeatable. Has no effect if XInput2 is not
-# available on the X server, or if no master pointer currently has this
-# name (re-checked on every XIHierarchyChanged event, so plugging in the
-# device later is picked up without a restart).
-state FOCUS_IGNORE_POINTER:
-  devicename = string
-      -> call cfg_focus_ignore_pointer($devicename)
+# Declares a multiseat seat: a group of `xinput create-master` pairs (each
+# <master> is the create-master name, "core" being the Virtual core pair)
+# which has its own focus. Without an output line a seat may focus windows
+# on every output; "none" (or an empty output list) makes it inactive, its
+# pointer then never changes focus.
+state SEAT:
+  seat = word
+      -> SEAT_ACTION
+
+state SEAT_ACTION:
+  'input'
+      -> SEAT_INPUT_WORD
+  'output'
+      -> SEAT_OUTPUT_WORD
+
+state SEAT_INPUT_WORD:
+  input = word
+      -> call cfg_seat_input($seat, $input); SEAT_INPUT_WORD
+  end
+      -> call cfg_seat_input($seat, NULL); INITIAL
+
+state SEAT_OUTPUT_WORD:
+  output = word
+      -> call cfg_seat_output($seat, $output); SEAT_OUTPUT_WORD
+  end
+      -> call cfg_seat_output($seat, NULL); INITIAL
 
 # ipc-socket <path>
 state IPC_SOCKET:

@@ -4,22 +4,20 @@
  * i3 - an improved tiling window manager
  * © 2009 Michael Stapelberg and contributors (see also: LICENSE)
  *
- * xinput.c: XInput2 support. Lets a designated ("ignored") master pointer
- * click/drag/scroll windows without ever stealing i3's focus, via the
- * focus_ignore_pointer configuration directive.
+ * xinput.c: XInput2 support, the device layer underneath multiseat (see
+ * seat.c).
  *
  * Client windows are grabbed and frame/decoration windows have their
  * events selected via XInput2 instead of the core protocol so that
  * button-press events carry a device id (see xcb_grab_buttons() /
  * FRAME_EVENT_MASK in the pre-XInput2 code). handle_button_press() is told
- * which device originated the click; route_click() uses that to decide
- * whether to skip focusing.
+ * which device originated the click, which identifies the seat.
  *
- * Master pointer ids are not stable across X server restarts and the
- * ignored pointer may be created or destroyed at runtime (e.g. a
- * touchscreen being (un)docked), so device name resolution happens once at
- * startup and again on every XIHierarchyChanged event and config reload,
- * rather than being cached permanently.
+ * Master device ids are not stable across X server restarts and masters may
+ * be created or destroyed at runtime (e.g. a touchscreen being (un)docked),
+ * so seat device resolution happens once at startup and again on every
+ * XIHierarchyChanged event and config reload, rather than being cached
+ * permanently.
  *
  */
 #include "all.h"
@@ -36,9 +34,6 @@ xcb_input_device_id_t xinput_last_event_device = XCB_INPUT_DEVICE_ALL_MASTER;
  * that later window creations don't select button events twice (once per
  * protocol). */
 uint32_t xinput_core_button_fallback_mask = XCB_EVENT_MASK_BUTTON_PRESS | XCB_EVENT_MASK_BUTTON_RELEASE;
-
-static xcb_input_device_id_t *ignored_devices = NULL;
-static size_t num_ignored_devices = 0;
 
 /*
  * Converts an XInput2 button press/release event (Fp1616 coordinates, a
@@ -68,83 +63,22 @@ static void xinput_translate_button_event(const xcb_input_button_press_event_t *
     event->same_screen = true;
 }
 
-/*
- * Frees any previously resolved ignore list and re-resolves
- * focus_ignore_pointer device names against the master pointers currently
- * known to the X server. Safe to call at any time, including when XInput2
- * is not supported (in which case it is a no-op) or when
- * focus_ignore_pointers is empty.
- *
- */
-void xinput_reresolve_ignored_pointers(void) {
-    FREE(ignored_devices);
-    num_ignored_devices = 0;
-
-    if (!xinput_supported || TAILQ_EMPTY(&focus_ignore_pointers)) {
-        return;
-    }
-
-    xcb_input_xi_query_device_cookie_t cookie = xcb_input_xi_query_device(conn, XCB_INPUT_DEVICE_ALL_MASTER);
-    xcb_input_xi_query_device_reply_t *reply = xcb_input_xi_query_device_reply(conn, cookie, NULL);
-    if (reply == NULL) {
-        ELOG("XIQueryDevice failed, focus_ignore_pointer directives will have no effect\n");
-        return;
-    }
-
-    xcb_input_xi_device_info_iterator_t iter = xcb_input_xi_query_device_infos_iterator(reply);
-    for (; iter.rem > 0; xcb_input_xi_device_info_next(&iter)) {
-        xcb_input_xi_device_info_t *info = iter.data;
-        if (info->type != XCB_INPUT_DEVICE_TYPE_MASTER_POINTER) {
-            continue;
-        }
-
-        const int name_len = xcb_input_xi_device_info_name_length(info);
-        const char *name = xcb_input_xi_device_info_name(info);
-
-        struct focus_ignore_pointer *ignored;
-        TAILQ_FOREACH (ignored, &focus_ignore_pointers, focus_ignore_pointers) {
-            if ((int)strlen(ignored->name) != name_len || strncmp(ignored->name, name, name_len) != 0) {
-                continue;
-            }
-
-            DLOG("focus_ignore_pointer \"%s\" resolved to XInput2 device id %d\n", ignored->name, info->deviceid);
-            ignored_devices = srealloc(ignored_devices, (num_ignored_devices + 1) * sizeof(xcb_input_device_id_t));
-            ignored_devices[num_ignored_devices++] = info->deviceid;
-            break;
-        }
-    }
-
-    free(reply);
-}
-
-/*
- * Returns true if the given device id belongs to a currently resolved
- * focus_ignore_pointer master pointer.
- *
- */
-bool xinput_pointer_is_ignored(xcb_input_device_id_t deviceid) {
-    for (size_t i = 0; i < num_ignored_devices; i++) {
-        if (ignored_devices[i] == deviceid) {
-            return true;
-        }
-    }
-    return false;
-}
-
 void xinput_init(void) {
     const xcb_query_extension_reply_t *extreply = xcb_get_extension_data(conn, &xcb_input_id);
     if (!extreply->present) {
-        DLOG("XInput extension is not present on this server, focus_ignore_pointer will have no effect\n");
+        DLOG("XInput extension is not present on this server, seats will have no effect\n");
         xinput_supported = false;
+        seat_apply_config();
         return;
     }
 
     xcb_input_xi_query_version_cookie_t cookie = xcb_input_xi_query_version(conn, 2, 2);
     xcb_input_xi_query_version_reply_t *version = xcb_input_xi_query_version_reply(conn, cookie, NULL);
     if (version == NULL || version->major_version < 2) {
-        DLOG("XInput2 (>= 2.0) is not supported by this server, focus_ignore_pointer will have no effect\n");
+        DLOG("XInput2 (>= 2.0) is not supported by this server, seats will have no effect\n");
         free(version);
         xinput_supported = false;
+        seat_apply_config();
         return;
     }
     DLOG("XInput %d.%d negotiated\n", version->major_version, version->minor_version);
@@ -163,10 +97,10 @@ void xinput_init(void) {
     xinput_core_button_fallback_mask = 0;
 
     /* Select, in one request:
-     *  - XIHierarchyChanged on all devices, so that a focus_ignore_pointer
-     *    master which appears or disappears after startup (docking, or an
-     *    autostart script creating it after i3 has already come up) is
-     *    picked up without requiring an i3 restart.
+     *  - XIHierarchyChanged on all devices, so that a seat's master which
+     *    appears or disappears after startup (docking, or an autostart
+     *    script creating it after i3 has already come up) is picked up
+     *    without requiring an i3 restart.
      *  - button press (not release: root has no use for it, see the
      *    ROOT_EVENT_MASK comment in include/xcb.h) on all (current and
      *    future) master pointers, so that clicks on the root window
@@ -188,7 +122,7 @@ void xinput_init(void) {
      * events at the core protocol level too. */
     xcb_change_window_attributes(conn, root, XCB_CW_EVENT_MASK, (uint32_t[]){ROOT_EVENT_MASK});
 
-    xinput_reresolve_ignored_pointers();
+    seat_apply_config();
 }
 
 void xinput_select_button_events(xcb_connection_t *conn, xcb_window_t window) {
@@ -213,7 +147,10 @@ void xinput_grab_buttons(xcb_connection_t *conn, xcb_window_t window, int *butto
     const uint32_t mask[] = {XCB_INPUT_XI_EVENT_MASK_BUTTON_PRESS};
 
     for (int i = 0; buttons[i] > 0; i++) {
-        xcb_input_xi_passive_grab_device(
+        /* The request has a reply (the modifier combinations that failed to
+         * grab) which we never read; discard it so libxcb does not keep it
+         * pending forever. */
+        xcb_input_xi_passive_grab_device_cookie_t cookie = xcb_input_xi_passive_grab_device(
             conn,
             XCB_CURRENT_TIME,
             window,
@@ -228,6 +165,7 @@ void xinput_grab_buttons(xcb_connection_t *conn, xcb_window_t window, int *butto
             0,                            /* owner_events */
             mask,
             modifiers);
+        xcb_discard_reply(conn, cookie.sequence);
     }
 }
 
@@ -261,8 +199,8 @@ void xinput_handle_event(xcb_generic_event_t *event) {
         }
 
         case XCB_INPUT_HIERARCHY:
-            DLOG("XIHierarchyChanged event, re-resolving focus_ignore_pointer devices\n");
-            xinput_reresolve_ignored_pointers();
+            DLOG("XIHierarchyChanged event, re-resolving seat devices\n");
+            seat_resolve_devices();
             break;
     }
 }

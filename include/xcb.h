@@ -36,7 +36,7 @@
  * separately via XInput2 (see xinput_select_button_events(), called once
  * when the frame window is created), which lets handle_button_press()
  * know which pointer device a click came from — this is what
- * focus_ignore_pointer needs (see xinput.c). Hardcoding them here as well
+ * multiseat needs (see xinput.c, seat.c). Hardcoding them here as well
  * would deliver every decoration click twice, once via each protocol; the
  * fallback variable is 0 exactly when that would happen, and holds the
  * core bits only for as long as (or if) XInput2 button delivery isn't

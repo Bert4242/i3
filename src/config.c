@@ -78,11 +78,10 @@ static void free_configuration(void) {
         FREE(assign);
     }
 
-    while (!TAILQ_EMPTY(&focus_ignore_pointers)) {
-        struct focus_ignore_pointer *ignored = TAILQ_FIRST(&focus_ignore_pointers);
-        FREE(ignored->name);
-        TAILQ_REMOVE(&focus_ignore_pointers, ignored, focus_ignore_pointers);
-        FREE(ignored);
+    while (!TAILQ_EMPTY(&seat_configs)) {
+        Seat *seat = TAILQ_FIRST(&seat_configs);
+        TAILQ_REMOVE(&seat_configs, seat, seats);
+        seat_free(seat);
     }
 
     /* Clear bar configs */

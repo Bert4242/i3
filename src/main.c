@@ -99,9 +99,6 @@ struct assignments_head assignments = TAILQ_HEAD_INITIALIZER(assignments);
  * output) */
 struct ws_assignments_head ws_assignments = TAILQ_HEAD_INITIALIZER(ws_assignments);
 
-/* The list of master pointer names configured via focus_ignore_pointer */
-struct focus_ignore_pointers_head focus_ignore_pointers = TAILQ_HEAD_INITIALIZER(focus_ignore_pointers);
-
 /* We hope that those are supported and set them to true */
 bool xkb_supported = true;
 bool shape_supported = true;
@@ -688,6 +685,7 @@ int main(int argc, char *argv[]) {
     I3_REST_ATOMS_XMACRO
 #undef xmacro
 
+    seat_init();
     load_configuration(override_configpath, C_LOAD);
 
     if (config.ipc_socket_path == NULL) {
@@ -907,8 +905,7 @@ int main(int argc, char *argv[]) {
         DLOG("shape 1.1 is not present on this server\n");
     }
 
-    /* Needs the focus_ignore_pointers list populated by parsing
-     * focus_ignore_pointer directives, so must run after
+    /* Needs the seat directives parsed, so must run after
      * load_configuration(C_LOAD) above. */
     xinput_init();
 

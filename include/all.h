@@ -42,6 +42,7 @@
 #include "log.h"
 #include "xcb.h"
 #include "xinput.h"
+#include "seat.h"
 #include "manage.h"
 #include "workspace.h"
 #include "i3.h"
