@@ -21,6 +21,7 @@ struct workspaces_json_params {
     char *cur_key;
     bool need_output;
     bool parsing_rect;
+    bool parsing_seats;
 };
 
 /*
@@ -103,6 +104,13 @@ static int workspaces_integer_cb(void *params_, const long long val) {
  */
 static int workspaces_string_cb(void *params_, const unsigned char *val, const size_t len) {
     struct workspaces_json_params *params = params_;
+
+    if (params->parsing_seats) {
+        /* One seat name per array element; the key stays "seats" until the
+         * array ends. */
+        params->workspaces_walk->num_seats++;
+        return 1;
+    }
 
     if (!strcmp(params->cur_key, "name")) {
         const char *ws_name = (const char *)val;
@@ -244,6 +252,30 @@ static int workspaces_map_key_cb(void *params_, const unsigned char *keyVal, con
     return 1;
 }
 
+/*
+ * The only arrays inside a workspace are "seats" (the names of the seats
+ * currently focusing the workspace); the outermost array holds the
+ * workspaces themselves.
+ *
+ */
+static int workspaces_start_array_cb(void *params_) {
+    struct workspaces_json_params *params = params_;
+    if (params->cur_key != NULL && !strcmp(params->cur_key, "seats")) {
+        params->parsing_seats = true;
+        params->workspaces_walk->num_seats = 0;
+    }
+    return 1;
+}
+
+static int workspaces_end_array_cb(void *params_) {
+    struct workspaces_json_params *params = params_;
+    if (params->parsing_seats) {
+        params->parsing_seats = false;
+        FREE(params->cur_key);
+    }
+    return 1;
+}
+
 /* A data structure to pass all these callbacks to yajl */
 static yajl_callbacks workspaces_callbacks = {
     .yajl_boolean = workspaces_boolean_cb,
@@ -252,6 +284,8 @@ static yajl_callbacks workspaces_callbacks = {
     .yajl_start_map = workspaces_start_map_cb,
     .yajl_end_map = workspaces_end_map_cb,
     .yajl_map_key = workspaces_map_key_cb,
+    .yajl_start_array = workspaces_start_array_cb,
+    .yajl_end_array = workspaces_end_array_cb,
 };
 
 /*

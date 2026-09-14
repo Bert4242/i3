@@ -69,6 +69,9 @@ typedef struct i3_ipc_header {
 /** Request the current binding state. */
 #define I3_IPC_MESSAGE_TYPE_GET_BINDING_STATE 12
 
+/** Requests the list of seats (multiseat). */
+#define I3_IPC_MESSAGE_TYPE_GET_SEATS 13
+
 /*
  * Messages from i3 to clients
  *
@@ -86,6 +89,7 @@ typedef struct i3_ipc_header {
 #define I3_IPC_REPLY_TYPE_TICK 10
 #define I3_IPC_REPLY_TYPE_SYNC 11
 #define I3_IPC_REPLY_TYPE_GET_BINDING_STATE 12
+#define I3_IPC_REPLY_TYPE_SEATS 13
 
 /*
  * Events from i3 to clients. Events have the first bit set high.
@@ -116,3 +120,6 @@ typedef struct i3_ipc_header {
 
 /** The tick event will be sent upon a tick IPC message */
 #define I3_IPC_EVENT_TICK (I3_IPC_EVENT_MASK | 7)
+
+/** Seat event: a seat was added or removed, or its inputs or outputs changed */
+#define I3_IPC_EVENT_SEAT (I3_IPC_EVENT_MASK | 8)

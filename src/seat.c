@@ -226,11 +226,14 @@ void seat_remove(Seat *seat) {
 
     while (!TAILQ_EMPTY(&(seat->inputs))) {
         struct seat_input *input = TAILQ_FIRST(&(seat->inputs));
-        seat_add_input(&seats, default_seat, input->name);
+        /* seat_add_input() removes (frees) the input from this seat first. */
+        char *name = sstrdup(input->name);
+        seat_add_input(&seats, default_seat, name);
+        free(name);
     }
 
     if (current_seat == seat) {
-        current_seat = default_seat;
+        seat_make_current(default_seat);
     }
     if (last_active_seat == seat) {
         last_active_seat = default_seat;
@@ -527,6 +530,14 @@ bool seat_focuses_con(Con *con) {
         }
     }
     return false;
+}
+
+void seat_invalidate_focus_ids(void) {
+    Seat *seat;
+    TAILQ_FOREACH (seat, &seats, seats) {
+        seat->focused_id = XCB_NONE;
+    }
+    focused_id = XCB_NONE;
 }
 
 xcb_input_device_id_t seat_first_pointer(Seat *seat) {

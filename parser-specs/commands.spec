@@ -44,6 +44,7 @@ state INITIAL:
   'mode' -> MODE
   'bar' -> BAR
   'gaps' -> GAPS
+  'seat' -> SEAT
 
 state CRITERIA:
   ctype = 'class'       -> CRITERION
@@ -532,6 +533,39 @@ state BAR:
       -> BAR_HIDDEN_STATE
   'mode'
       -> BAR_MODE
+
+# seat <name>                              run the rest of this command string as <name>
+# seat <name> <command>                    run <command> as <name>
+# seat <name> input <master> [<master> …]
+# seat <name> output all|none|<output> [<output> …]
+# seat <name> remove
+state SEAT:
+  seat = word
+      -> SEAT_ACTION
+
+state SEAT_ACTION:
+  'input'
+      -> SEAT_INPUT
+  'output'
+      -> SEAT_OUTPUT
+  'remove'
+      -> call cmd_seat_remove($seat)
+  end
+      -> call cmd_seat_select($seat)
+  command = string
+      -> call cmd_seat_run($seat, $command)
+
+state SEAT_INPUT:
+  input = word
+      -> call cmd_seat_input($seat, $input); SEAT_INPUT
+  end
+      -> call cmd_seat_input($seat, NULL)
+
+state SEAT_OUTPUT:
+  output = word
+      -> call cmd_seat_output($seat, $output); SEAT_OUTPUT
+  end
+      -> call cmd_seat_output($seat, NULL)
 
 state BAR_HIDDEN_STATE:
   bar_value = 'hide', 'show', 'toggle'

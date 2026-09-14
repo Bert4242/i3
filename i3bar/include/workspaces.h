@@ -37,6 +37,7 @@ struct i3_ws {
     int name_width;           /* The rendered width of the name */
     bool visible;             /* If the ws is currently visible on an output */
     bool focused;             /* If the ws is currently focused */
+    int num_seats;            /* How many seats currently focus the ws (multiseat) */
     bool urgent;              /* If the urgent hint of the ws is set */
     struct i3_output *output; /* The current output of the ws */
 

@@ -2140,7 +2140,7 @@ void draw_bars(bool unhide) {
                 color_t bg_color = colors.inactive_ws_bg;
                 color_t border_color = colors.inactive_ws_border;
                 if (ws_walk->visible) {
-                    if (!ws_walk->focused) {
+                    if (!ws_walk->focused && ws_walk->num_seats == 0) {
                         fg_color = colors.active_ws_fg;
                         bg_color = colors.active_ws_bg;
                         border_color = colors.active_ws_border;

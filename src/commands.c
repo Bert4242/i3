@@ -2536,3 +2536,168 @@ void cmd_gaps(I3_CMD, const char *type, const char *scope, const char *mode, con
 error:
     ysuccess(false);
 }
+
+/*
+ * Like the config parser, the command parser clears its stack after every
+ * call, so the seat name only arrives with the first word of a list.
+ */
+static char *cmd_seat_name = NULL;
+static bool cmd_seat_list_started = false;
+
+static Seat *cmd_seat_get_or_create(const char *seat, bool create) {
+    if (seat) {
+        FREE(cmd_seat_name);
+        cmd_seat_name = sstrdup(seat);
+        cmd_seat_list_started = false;
+    } else if (!cmd_seat_name) {
+        return NULL;
+    }
+
+    Seat *result = seat_by_name(cmd_seat_name);
+    if (result == NULL && create) {
+        result = seat_new(&seats, cmd_seat_name);
+        seat_store_current();
+        result->focused = focused;
+        result->focused_id = XCB_NONE;
+        ipc_send_seat_event("new", result);
+    }
+    return result;
+}
+
+static void cmd_seat_devices_changed(Seat *seat, const char *change) {
+    ungrab_all_keys(conn);
+    seat_resolve_devices();
+    grab_all_keys(conn);
+    seat_invalidate_focus_ids();
+    ipc_send_seat_event(change, seat);
+}
+
+/*
+ * Implementation of 'seat <name>'.
+ *
+ */
+void cmd_seat_select(I3_CMD, const char *seat) {
+    Seat *target = seat_by_name(seat);
+    if (target == NULL) {
+        yerror("No such seat: %s", seat);
+        return;
+    }
+    seat_make_current(target);
+    ysuccess(true);
+}
+
+/*
+ * Implementation of 'seat <name> <command>'.
+ *
+ */
+void cmd_seat_run(I3_CMD, const char *seat, const char *command) {
+    Seat *target = seat_by_name(seat);
+    if (target == NULL) {
+        yerror("No such seat: %s", seat);
+        return;
+    }
+
+    /* The nested command may remove the seat we started from. */
+    char *previous_name = sstrdup(current_seat->name);
+    seat_make_current(target);
+    CommandResult *result = parse_command(command, NULL, cmd_output->client);
+    Seat *previous = seat_by_name(previous_name);
+    seat_make_current(previous != NULL ? previous : default_seat);
+    free(previous_name);
+
+    cmd_output->needs_tree_render |= result->needs_tree_render;
+    if (result->parse_error) {
+        yerror("Could not run \"%s\" as seat %s", command, seat);
+    } else {
+        ysuccess(true);
+    }
+    command_result_free(result);
+}
+
+/*
+ * Implementation of 'seat <name> input <master> […]'.
+ *
+ */
+void cmd_seat_input(I3_CMD, const char *seat, const char *input) {
+    Seat *target = cmd_seat_get_or_create(seat, true);
+    if (target == NULL) {
+        yerror("No seat name given");
+        return;
+    }
+
+    if (!cmd_seat_list_started) {
+        seat_clear_inputs(target);
+        cmd_seat_list_started = true;
+    }
+
+    if (input != NULL) {
+        DLOG("Assigning input \"%s\" to seat \"%s\"\n", input, target->name);
+        seat_add_input(&seats, target, input);
+        return;
+    }
+
+    cmd_seat_devices_changed(target, "input");
+    ysuccess(true);
+}
+
+/*
+ * Implementation of 'seat <name> output all|none|<output> […]'.
+ *
+ */
+void cmd_seat_output(I3_CMD, const char *seat, const char *output) {
+    Seat *target = cmd_seat_get_or_create(seat, true);
+    if (target == NULL) {
+        yerror("No seat name given");
+        return;
+    }
+
+    if (output == NULL) {
+        if (!cmd_seat_list_started) {
+            seat_set_output_mode(target, SEAT_OUTPUTS_NONE);
+        }
+        ipc_send_seat_event("output", target);
+        cmd_output->needs_tree_render = true;
+        ysuccess(true);
+        return;
+    }
+
+    if (!cmd_seat_list_started) {
+        seat_set_output_mode(target, SEAT_OUTPUTS_NAMED);
+        cmd_seat_list_started = true;
+    }
+    if (strcasecmp(output, "all") == 0) {
+        seat_set_output_mode(target, SEAT_OUTPUTS_ALL);
+        return;
+    }
+    if (strcasecmp(output, "none") == 0) {
+        seat_set_output_mode(target, SEAT_OUTPUTS_NONE);
+        return;
+    }
+    if (target->output_mode != SEAT_OUTPUTS_NAMED) {
+        seat_set_output_mode(target, SEAT_OUTPUTS_NAMED);
+    }
+    DLOG("Assigning output \"%s\" to seat \"%s\"\n", output, target->name);
+    seat_add_output(target, output);
+}
+
+/*
+ * Implementation of 'seat <name> remove'.
+ *
+ */
+void cmd_seat_remove(I3_CMD, const char *seat) {
+    Seat *target = seat_by_name(seat);
+    if (target == NULL) {
+        yerror("No such seat: %s", seat);
+        return;
+    }
+    if (target == default_seat) {
+        yerror("The default seat cannot be removed");
+        return;
+    }
+
+    ipc_send_seat_event("remove", target);
+    seat_remove(target);
+    cmd_seat_devices_changed(NULL, "devices");
+    cmd_output->needs_tree_render = true;
+    ysuccess(true);
+}

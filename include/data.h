@@ -275,6 +275,9 @@ struct Startup_Sequence {
     char *id;
     /** workspace on which this startup was initiated */
     char *workspace;
+    /** seat which initiated this startup (its window ends up next to that
+     * seat's focus) */
+    char *seat;
     /** libstartup-notification context for this launch */
     SnLauncherContext *context;
     /** time at which this sequence should be deleted (after it was marked as

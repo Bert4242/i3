@@ -176,8 +176,16 @@ static void x_set_seat_client_pointer(Seat *seat, xcb_window_t window) {
  *
  */
 static void x_push_seat_focus(Seat *seat) {
-    /* An inactive seat's keyboards follow the default seat. */
-    Con *target = seat_is_inactive(seat) ? default_seat->focused : seat->focused;
+    /* An inactive seat's keyboards follow the default seat; track that as
+     * its own focus too, so that it starts from something current if it is
+     * later given outputs. */
+    if (seat_is_inactive(seat) && default_seat->focused != NULL) {
+        if (seat->focused != default_seat->focused) {
+            seat->focused = default_seat->focused;
+            seat->focused_id = XCB_NONE;
+        }
+    }
+    Con *target = seat->focused;
     if (target == NULL) {
         return;
     }
@@ -206,7 +214,7 @@ static void x_push_seat_focus(Seat *seat) {
                 change_ewmh_focus(seat, (con_has_managed_window(target) ? target->window->id : XCB_WINDOW_NONE), seat->last_focused);
 
                 if (to_focus != seat->last_focused && is_con_attached(target)) {
-                    ipc_send_window_event("focus", target);
+                    ipc_send_window_focus_event(target, seat);
                 }
             } else {
                 DLOG("Updating focus of seat \"%s\" (focused: %p / %s) to X11 window 0x%08x\n", seat->name, target, target->name, to_focus);
@@ -227,7 +235,7 @@ static void x_push_seat_focus(Seat *seat) {
                 change_ewmh_focus(seat, (con_has_managed_window(target) ? target->window->id : XCB_WINDOW_NONE), seat->last_focused);
 
                 if (to_focus != XCB_NONE && to_focus != seat->last_focused && target->window != NULL && is_con_attached(target)) {
-                    ipc_send_window_event("focus", target);
+                    ipc_send_window_focus_event(target, seat);
                 }
             }
 

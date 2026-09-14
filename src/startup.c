@@ -115,6 +115,7 @@ void startup_sequence_delete(struct Startup_Sequence *sequence) {
 
     free(sequence->id);
     free(sequence->workspace);
+    free(sequence->seat);
     FREE(sequence);
 }
 
@@ -166,6 +167,7 @@ void start_application(const char *command, bool no_startup_id, xcb_window_t win
         struct Startup_Sequence *sequence = scalloc(1, sizeof(struct Startup_Sequence));
         sequence->id = sstrdup(sn_launcher_context_get_startup_id(context));
         sequence->workspace = sstrdup(ws->name);
+        sequence->seat = sstrdup(current_seat->name);
         sequence->context = context;
         TAILQ_INSERT_TAIL(&startup_sequences, sequence, sequences);
 
@@ -353,7 +355,7 @@ struct Startup_Sequence *startup_sequence_get(const i3Window *cwindow,
  * Returns NULL otherwise.
  *
  */
-char *startup_workspace_for_window(const i3Window *cwindow, xcb_get_property_reply_t *startup_id_reply) {
+struct Startup_Sequence *startup_sequence_for_window(const i3Window *cwindow, xcb_get_property_reply_t *startup_id_reply) {
     struct Startup_Sequence *sequence = startup_sequence_get(cwindow, startup_id_reply, false);
     if (sequence == NULL) {
         return NULL;
@@ -367,7 +369,7 @@ char *startup_workspace_for_window(const i3Window *cwindow, xcb_get_property_rep
         return NULL;
     }
 
-    return sequence->workspace;
+    return sequence;
 }
 
 /*

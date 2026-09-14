@@ -18,6 +18,7 @@
 #include "data.h"
 #include "tree.h"
 #include "configuration.h"
+#include "seat.h"
 
 #include "i3/ipc.h"
 
@@ -124,6 +125,20 @@ void ipc_send_workspace_event(const char *change, Con *current, Con *old);
  * also the window container, in "container".
  */
 void ipc_send_window_event(const char *property, Con *con);
+
+/**
+ * Sends a window "focus" event which also names the seat whose focus
+ * changed.
+ *
+ */
+void ipc_send_window_focus_event(Con *con, Seat *seat);
+
+/**
+ * Sends a seat event: "change" says what happened (new, remove, input,
+ * output, devices) and "seat" is the affected seat (or null).
+ *
+ */
+void ipc_send_seat_event(const char *change, Seat *seat);
 
 /**
  * For the barconfig update events, we send the serialized barconfig.

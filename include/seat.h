@@ -273,6 +273,14 @@ bool seat_focuses_con(Con *con);
 Seat *seat_with_keyboard_focus(xcb_window_t window);
 
 /**
+ * Forces every seat's X11 keyboard focus to be set again on the next
+ * x_push_changes(), e.g. after master devices moved between seats: a
+ * keyboard which just joined a seat still has its previous focus.
+ *
+ */
+void seat_invalidate_focus_ids(void);
+
+/**
  * Returns the seat's first resolved master pointer, or SEAT_DEVICE_NONE.
  *
  */

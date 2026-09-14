@@ -410,6 +410,9 @@ void xinput_handle_event(xcb_generic_event_t *event) {
             ungrab_all_keys(conn);
             seat_resolve_devices();
             grab_all_keys(conn);
+            seat_invalidate_focus_ids();
+            ipc_send_seat_event("devices", NULL);
+            tree_render();
             break;
     }
 }

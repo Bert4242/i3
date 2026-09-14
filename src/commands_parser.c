@@ -164,8 +164,14 @@ CommandResult *parse_command(const char *input, yajl_gen gen, ipc_client *client
      * one. Restored on return so that a `seat <name>` command does not leak
      * into the next command string. */
 #ifndef TEST_PARSER
-    Seat *previous_seat = current_seat;
-    seat_make_current(last_active_seat);
+    /* Only the outermost command string starts as the last active seat:
+     * `seat <name> <command>` parses its command nested, as that seat. The
+     * previous seat is remembered by name since the command may remove it. */
+    static int parse_depth = 0;
+    char *previous_seat_name = sstrdup(current_seat->name);
+    if (parse_depth++ == 0) {
+        seat_make_current(last_active_seat);
+    }
 #endif
 
     cmd_ctx.state = INITIAL;
@@ -374,7 +380,10 @@ CommandResult *parse_command(const char *input, yajl_gen gen, ipc_client *client
         free(ow);
     }
 #ifndef TEST_PARSER
-    seat_make_current(previous_seat);
+    parse_depth--;
+    Seat *previous_seat = seat_by_name(previous_seat_name);
+    seat_make_current(previous_seat != NULL ? previous_seat : default_seat);
+    free(previous_seat_name);
 #endif
     return result;
 }

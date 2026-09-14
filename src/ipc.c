@@ -431,6 +431,17 @@ void dump_node(yajl_gen gen, Con *con, bool inplace_restart) {
     ystr("focused");
     y(bool, (con == focused));
 
+    ystr("seats");
+    y(array_open);
+    seat_store_current();
+    Seat *seat;
+    TAILQ_FOREACH (seat, &seats, seats) {
+        if (seat->focused == con && !seat_is_inactive(seat)) {
+            ystr(seat->name);
+        }
+    }
+    y(array_close);
+
     if (con->type != CT_ROOT && con->type != CT_OUTPUT) {
         ystr("output");
         ystr(con_get_output(con)->name);
@@ -960,6 +971,17 @@ IPC_HANDLER(get_workspaces) {
             ystr("focused");
             y(bool, ws == focused_ws);
 
+            ystr("seats");
+            y(array_open);
+            seat_store_current();
+            Seat *seat;
+            TAILQ_FOREACH (seat, &seats, seats) {
+                if (!seat_is_inactive(seat) && seat->focused != NULL && con_get_workspace(seat->focused) == ws) {
+                    ystr(seat->name);
+                }
+            }
+            y(array_close);
+
             ystr("rect");
             y(map_open);
             ystr("x");
@@ -1413,9 +1435,103 @@ IPC_HANDLER(get_binding_state) {
     y(free);
 }
 
+/*
+ * Serializes one seat: its name, whether it is active (has outputs), its
+ * inputs with their resolved device ids, its outputs and its focus.
+ *
+ */
+static void dump_seat(yajl_gen gen, Seat *seat) {
+    y(map_open);
+
+    ystr("name");
+    ystr(seat->name);
+
+    ystr("active");
+    y(bool, !seat_is_inactive(seat));
+
+    ystr("inputs");
+    y(array_open);
+    struct seat_input *input;
+    TAILQ_FOREACH (input, &(seat->inputs), inputs) {
+        y(map_open);
+        ystr("name");
+        ystr(input->name);
+        ystr("pointer");
+        if (input->pointer == SEAT_DEVICE_NONE) {
+            y(null);
+        } else {
+            y(integer, input->pointer);
+        }
+        ystr("keyboard");
+        if (input->keyboard == SEAT_DEVICE_NONE) {
+            y(null);
+        } else {
+            y(integer, input->keyboard);
+        }
+        y(map_close);
+    }
+    y(array_close);
+
+    ystr("outputs");
+    if (seat->output_mode == SEAT_OUTPUTS_ALL) {
+        ystr("all");
+    } else if (seat->output_mode == SEAT_OUTPUTS_NONE) {
+        ystr("none");
+    } else {
+        y(array_open);
+        struct output_name *output;
+        SLIST_FOREACH (output, &(seat->outputs), names) {
+            ystr(output->name);
+        }
+        y(array_close);
+    }
+
+    seat_store_current();
+    ystr("focused");
+    if (seat->focused == NULL) {
+        y(null);
+    } else {
+        y(integer, (uintptr_t)seat->focused);
+    }
+
+    ystr("workspace");
+    Con *ws = (seat->focused != NULL) ? con_get_workspace(seat->focused) : NULL;
+    if (ws == NULL) {
+        y(null);
+    } else {
+        ystr(ws->name);
+    }
+
+    y(map_close);
+}
+
+/*
+ * Formats the reply message for a GET_SEATS request and sends it to the
+ * client.
+ *
+ */
+IPC_HANDLER(get_seats) {
+    yajl_gen gen = ygenalloc();
+    y(array_open);
+
+    Seat *seat;
+    TAILQ_FOREACH (seat, &seats, seats) {
+        dump_seat(gen, seat);
+    }
+
+    y(array_close);
+
+    const unsigned char *payload;
+    ylength length;
+    y(get_buf, &payload, &length);
+
+    ipc_send_client_message(client, length, I3_IPC_REPLY_TYPE_SEATS, payload);
+    y(free);
+}
+
 /* The index of each callback function corresponds to the numeric
  * value of the message type (see include/i3/ipc.h) */
-handler_t handlers[13] = {
+handler_t handlers[14] = {
     handle_run_command,
     handle_get_workspaces,
     handle_subscribe,
@@ -1429,6 +1545,7 @@ handler_t handlers[13] = {
     handle_send_tick,
     handle_sync,
     handle_get_binding_state,
+    handle_get_seats,
 };
 
 /*
@@ -1637,9 +1754,10 @@ void ipc_send_workspace_event(const char *change, Con *current, Con *old) {
 
 /*
  * For the window events we send, along the usual "change" field,
- * also the window container, in "container".
+ * also the window container, in "container", and, for focus changes, the
+ * seat whose focus changed, in "seat".
  */
-void ipc_send_window_event(const char *property, Con *con) {
+static void ipc_send_window_event_for_seat(const char *property, Con *con, Seat *seat) {
     DLOG("Issue IPC window %s event (con = %p, window = 0x%08x)\n",
          property, con, (con->window ? con->window->id : XCB_WINDOW_NONE));
 
@@ -1655,6 +1773,11 @@ void ipc_send_window_event(const char *property, Con *con) {
     ystr("container");
     dump_node(gen, con, false);
 
+    if (seat != NULL) {
+        ystr("seat");
+        ystr(seat->name);
+    }
+
     y(map_close);
 
     const unsigned char *payload;
@@ -1665,6 +1788,45 @@ void ipc_send_window_event(const char *property, Con *con) {
     y(free);
     setlocale(LC_NUMERIC, prev_locale);
     free(prev_locale);
+}
+
+void ipc_send_window_event(const char *property, Con *con) {
+    ipc_send_window_event_for_seat(property, con, NULL);
+}
+
+void ipc_send_window_focus_event(Con *con, Seat *seat) {
+    ipc_send_window_event_for_seat("focus", con, seat);
+}
+
+/*
+ * Sends a seat event: "change" says what happened (new, remove, input,
+ * output, devices) and "seat" is the affected seat (or null).
+ */
+void ipc_send_seat_event(const char *change, Seat *seat) {
+    DLOG("Issue IPC seat %s event (seat = %s)\n", change, seat ? seat->name : "(null)");
+
+    yajl_gen gen = ygenalloc();
+
+    y(map_open);
+
+    ystr("change");
+    ystr(change);
+
+    ystr("seat");
+    if (seat == NULL) {
+        y(null);
+    } else {
+        dump_seat(gen, seat);
+    }
+
+    y(map_close);
+
+    const unsigned char *payload;
+    ylength length;
+    y(get_buf, &payload, &length);
+
+    ipc_send_event("seat", I3_IPC_EVENT_SEAT, (const char *)payload);
+    y(free);
 }
 
 /*

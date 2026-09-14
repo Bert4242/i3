@@ -343,3 +343,36 @@ void cmd_gaps(I3_CMD, const char *type, const char *scope, const char *mode, con
  *
  */
 void cmd_title_window_icon(I3_CMD, const char *enable, int padding);
+
+/**
+ * Implementation of 'seat <name>': the rest of the command string runs as
+ * that seat.
+ *
+ */
+void cmd_seat_select(I3_CMD, const char *seat);
+
+/**
+ * Implementation of 'seat <name> <command>'.
+ *
+ */
+void cmd_seat_run(I3_CMD, const char *seat, const char *command);
+
+/**
+ * Implementation of 'seat <name> input <master> […]', called once per word
+ * and once with input == NULL at the end.
+ *
+ */
+void cmd_seat_input(I3_CMD, const char *seat, const char *input);
+
+/**
+ * Implementation of 'seat <name> output all|none|<output> […]', called once
+ * per word and once with output == NULL at the end.
+ *
+ */
+void cmd_seat_output(I3_CMD, const char *seat, const char *output);
+
+/**
+ * Implementation of 'seat <name> remove'.
+ *
+ */
+void cmd_seat_remove(I3_CMD, const char *seat);

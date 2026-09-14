@@ -258,13 +258,29 @@ static void got_bar_config_update(const unsigned char *event, size_t size) {
     draw_bars(false);
 }
 
-/* Data structure to easily call the event handlers later */
+/*
+ * Called, when a seat event arrives (i.e. a seat was added, removed or
+ * changed its devices): workspaces may now belong to a different set of
+ * seats.
+ *
+ */
+static void got_seat_event(const unsigned char *event, size_t size) {
+    DLOG("Got seat event!\n");
+    i3_send_msg(I3_IPC_MESSAGE_TYPE_GET_WORKSPACES, NULL);
+}
+
+/* Data structure to easily call the event handlers later, indexed by the
+ * event type (see include/i3/ipc.h) */
 handler_t event_handlers[] = {
-    &got_workspace_event,
-    &got_output_event,
-    &got_mode_event,
-    NULL,
-    &got_bar_config_update,
+    &got_workspace_event,   /* I3_IPC_EVENT_WORKSPACE */
+    &got_output_event,      /* I3_IPC_EVENT_OUTPUT */
+    &got_mode_event,        /* I3_IPC_EVENT_MODE */
+    NULL,                   /* I3_IPC_EVENT_WINDOW */
+    &got_bar_config_update, /* I3_IPC_EVENT_BARCONFIG_UPDATE */
+    NULL,                   /* I3_IPC_EVENT_BINDING */
+    NULL,                   /* I3_IPC_EVENT_SHUTDOWN */
+    NULL,                   /* I3_IPC_EVENT_TICK */
+    &got_seat_event,        /* I3_IPC_EVENT_SEAT */
 };
 
 /*
@@ -339,7 +355,9 @@ static void got_data(struct ev_loop *loop, ev_io *watcher, int events) {
     /* And call the callback (indexed by the type) */
     if (type & (1UL << 31)) {
         type ^= 1UL << 31;
-        event_handlers[type](buffer, size);
+        if (type < sizeof(event_handlers) / sizeof(event_handlers[0]) && event_handlers[type]) {
+            event_handlers[type](buffer, size);
+        }
     } else {
         if (reply_handlers[type]) {
             reply_handlers[type](buffer, size);
@@ -414,7 +432,7 @@ void destroy_connection(void) {
  */
 void subscribe_events(void) {
     if (i3_provides_workspaces()) {
-        i3_send_msg(I3_IPC_MESSAGE_TYPE_SUBSCRIBE, "[ \"workspace\", \"output\", \"mode\", \"barconfig_update\" ]");
+        i3_send_msg(I3_IPC_MESSAGE_TYPE_SUBSCRIBE, "[ \"workspace\", \"output\", \"mode\", \"barconfig_update\", \"seat\" ]");
     } else {
         i3_send_msg(I3_IPC_MESSAGE_TYPE_SUBSCRIBE, "[ \"output\", \"mode\", \"barconfig_update\" ]");
     }

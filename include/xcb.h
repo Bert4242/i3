@@ -54,9 +54,9 @@
  * button-release handling (it only cares about the initial click, to focus
  * the right output's workspace), and never asked for release events before
  * this feature existed either. */
-#define ROOT_EVENT_MASK ((xinput_core_fallback_mask & (XCB_EVENT_MASK_BUTTON_PRESS |                 \
-                                                       XCB_EVENT_MASK_POINTER_MOTION |               \
-                                                       XCB_EVENT_MASK_ENTER_WINDOW)) |               \
+#define ROOT_EVENT_MASK ((xinput_core_fallback_mask & (XCB_EVENT_MASK_BUTTON_PRESS |                  \
+                                                       XCB_EVENT_MASK_POINTER_MOTION |                \
+                                                       XCB_EVENT_MASK_ENTER_WINDOW)) |                \
                          XCB_EVENT_MASK_SUBSTRUCTURE_REDIRECT |                                       \
                          XCB_EVENT_MASK_STRUCTURE_NOTIFY | /* when the user adds a screen (e.g. video \
                                                             * projector), the root window gets a      \
