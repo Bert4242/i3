@@ -155,10 +155,29 @@ static bool tiling_resize(Con *con, xcb_button_press_event_t *event, const click
     return false;
 }
 
-static void allow_replay_pointer(xcb_timestamp_t time) {
-    xcb_allow_events(conn, XCB_ALLOW_REPLAY_POINTER, time);
+static void allow_replay_pointer(xcb_timestamp_t time, xcb_input_device_id_t deviceid) {
+    if (xinput_supported) {
+        xcb_input_xi_allow_events(conn, time, deviceid, XCB_INPUT_EVENT_MODE_REPLAY_DEVICE, XCB_NONE, XCB_NONE);
+    } else {
+        xcb_allow_events(conn, XCB_ALLOW_REPLAY_POINTER, time);
+    }
     xcb_flush(conn);
     tree_render();
+}
+
+/*
+ * Focuses con_to_focus unless the click originated from a pointer device
+ * configured via focus_ignore_pointer, in which case i3's focus is left
+ * untouched (the click/drag/scroll still reaches the window normally via
+ * the replay/pass-through logic in route_click()).
+ *
+ */
+static void activate_unless_ignored(Con *con_to_focus, xcb_input_device_id_t deviceid) {
+    if (xinput_pointer_is_ignored(deviceid)) {
+        DLOG("Not focusing con %p, click originated from an ignored XInput2 pointer device (%d)\n", con_to_focus, deviceid);
+        return;
+    }
+    con_activate(con_to_focus);
 }
 
 /*
@@ -166,7 +185,7 @@ static void allow_replay_pointer(xcb_timestamp_t time) {
  * functions for resizing/dragging.
  *
  */
-static void route_click(Con *con, xcb_button_press_event_t *event, const click_destination_t dest) {
+static void route_click(Con *con, xcb_button_press_event_t *event, const click_destination_t dest, xcb_input_device_id_t deviceid) {
     const uint32_t mod = (config.floating_modifier & 0xFFFF);
     const bool mod_pressed = (mod != 0 && (event->state & mod) == mod);
 
@@ -176,7 +195,7 @@ static void route_click(Con *con, xcb_button_press_event_t *event, const click_d
 
     /* don’t handle dockarea cons, they must not be focused */
     if (con->parent->type == CT_DOCKAREA) {
-        allow_replay_pointer(event->time);
+        allow_replay_pointer(event->time, deviceid);
         return;
     }
 
@@ -189,7 +208,11 @@ static void route_click(Con *con, xcb_button_press_event_t *event, const click_d
         CommandResult *result = run_binding(bind, con);
 
         /* ASYNC_POINTER eats the event */
-        xcb_allow_events(conn, XCB_ALLOW_ASYNC_POINTER, event->time);
+        if (xinput_supported) {
+            xcb_input_xi_allow_events(conn, event->time, deviceid, XCB_INPUT_EVENT_MODE_ASYNC_DEVICE, XCB_NONE, XCB_NONE);
+        } else {
+            xcb_allow_events(conn, XCB_ALLOW_ASYNC_POINTER, event->time);
+        }
         xcb_flush(conn);
 
         command_result_free(result);
@@ -198,7 +221,7 @@ static void route_click(Con *con, xcb_button_press_event_t *event, const click_d
 
     /* There is no default behavior for button release events so we are done. */
     if (event->response_type == XCB_BUTTON_RELEASE) {
-        allow_replay_pointer(event->time);
+        allow_replay_pointer(event->time, deviceid);
         return;
     }
 
@@ -211,7 +234,7 @@ static void route_click(Con *con, xcb_button_press_event_t *event, const click_d
     if (!ws) {
         ws = TAILQ_FIRST(&(output_get_content(con_get_output(con))->focus_head));
         if (!ws) {
-            allow_replay_pointer(event->time);
+            allow_replay_pointer(event->time, deviceid);
             return;
         }
     }
@@ -241,9 +264,9 @@ static void route_click(Con *con, xcb_button_press_event_t *event, const click_d
         const position_t direction =
             (event->detail == XCB_BUTTON_SCROLL_UP || event->detail == XCB_BUTTON_SCROLL_LEFT) ? BEFORE : AFTER;
         Con *next = get_tree_next_sibling(current, direction);
-        con_activate(con_descend_focused(next ? next : current));
+        activate_unless_ignored(con_descend_focused(next ? next : current), deviceid);
 
-        allow_replay_pointer(event->time);
+        allow_replay_pointer(event->time, deviceid);
         return;
     }
 
@@ -254,7 +277,7 @@ static void route_click(Con *con, xcb_button_press_event_t *event, const click_d
         has_drop_targets()) {
         const bool use_threshold = !mod_pressed;
         tiling_drag(con, event, use_threshold);
-        allow_replay_pointer(event->time);
+        allow_replay_pointer(event->time, deviceid);
         return;
     }
 
@@ -274,7 +297,7 @@ static void route_click(Con *con, xcb_button_press_event_t *event, const click_d
     if (ws != focused_workspace) {
         workspace_show(ws);
     }
-    con_activate(con_to_focus);
+    activate_unless_ignored(con_to_focus, deviceid);
 
     /* 4: For floating containers, we also want to raise them on click.
      * We will skip handling events on floating cons in fullscreen mode */
@@ -300,7 +323,7 @@ static void route_click(Con *con, xcb_button_press_event_t *event, const click_d
             /* try tiling resize, but continue if it doesn’t work */
             DLOG("tiling resize with fallback\n");
             if (tiling_resize(con, event, dest, dest == CLICK_DECORATION && !was_focused)) {
-                allow_replay_pointer(event->time);
+                allow_replay_pointer(event->time, deviceid);
                 return;
             }
         }
@@ -324,7 +347,7 @@ static void route_click(Con *con, xcb_button_press_event_t *event, const click_d
             return;
         }
 
-        allow_replay_pointer(event->time);
+        allow_replay_pointer(event->time, deviceid);
         return;
     }
 
@@ -334,7 +357,7 @@ static void route_click(Con *con, xcb_button_press_event_t *event, const click_d
          (config.tiling_drag == TILING_DRAG_MODIFIER_OR_TITLEBAR &&
           (mod_pressed || dest == CLICK_DECORATION))) &&
         has_drop_targets()) {
-        allow_replay_pointer(event->time);
+        allow_replay_pointer(event->time, deviceid);
         const bool use_threshold = !mod_pressed;
         tiling_drag(con, event, use_threshold);
         return;
@@ -347,7 +370,11 @@ static void route_click(Con *con, xcb_button_press_event_t *event, const click_d
         }
         /* Avoid propagating events to clients, since the user expects
          * $mod+click to be handled by i3. */
-        xcb_allow_events(conn, XCB_ALLOW_ASYNC_POINTER, event->time);
+        if (xinput_supported) {
+            xcb_input_xi_allow_events(conn, event->time, deviceid, XCB_INPUT_EVENT_MODE_ASYNC_DEVICE, XCB_NONE, XCB_NONE);
+        } else {
+            xcb_allow_events(conn, XCB_ALLOW_ASYNC_POINTER, event->time);
+        }
         xcb_flush(conn);
         return;
     }
@@ -358,7 +385,7 @@ static void route_click(Con *con, xcb_button_press_event_t *event, const click_d
         tiling_resize(con, event, dest, dest == CLICK_DECORATION && !was_focused);
     }
 
-    allow_replay_pointer(event->time);
+    allow_replay_pointer(event->time, deviceid);
 }
 
 /*
@@ -369,7 +396,7 @@ static void route_click(Con *con, xcb_button_press_event_t *event, const click_d
  * Then, route_click is called on the appropriate con.
  *
  */
-void handle_button_press(xcb_button_press_event_t *event) {
+void handle_button_press(xcb_button_press_event_t *event, xcb_input_device_id_t deviceid) {
     Con *con;
     DLOG("Button %d (state %d) %s on window 0x%08x (child 0x%08x) at (%d, %d) (root %d, %d)\n",
          event->detail, event->state, (event->response_type == XCB_BUTTON_PRESS ? "press" : "release"),
@@ -377,9 +404,10 @@ void handle_button_press(xcb_button_press_event_t *event) {
          event->root_y);
 
     last_timestamp = event->time;
+    xinput_last_event_device = deviceid;
 
     if ((con = con_by_window_id(event->event))) {
-        route_click(con, event, CLICK_INSIDE);
+        route_click(con, event, CLICK_INSIDE, deviceid);
         return;
     }
 
@@ -416,7 +444,11 @@ void handle_button_press(xcb_button_press_event_t *event) {
         }
 
         ELOG("Clicked into unknown window?!\n");
-        xcb_allow_events(conn, XCB_ALLOW_REPLAY_POINTER, event->time);
+        if (xinput_supported) {
+            xcb_input_xi_allow_events(conn, event->time, deviceid, XCB_INPUT_EVENT_MODE_REPLAY_DEVICE, XCB_NONE, XCB_NONE);
+        } else {
+            xcb_allow_events(conn, XCB_ALLOW_REPLAY_POINTER, event->time);
+        }
         xcb_flush(conn);
         return;
     }
@@ -424,7 +456,7 @@ void handle_button_press(xcb_button_press_event_t *event) {
     /* Check if the click was on the decoration of a child */
     if (con->window != NULL) {
         if (rect_contains(con->deco_rect, event->event_x, event->event_y)) {
-            route_click(con, event, CLICK_DECORATION);
+            route_click(con, event, CLICK_DECORATION, deviceid);
             return;
         }
     } else {
@@ -434,16 +466,16 @@ void handle_button_press(xcb_button_press_event_t *event) {
                 continue;
             }
 
-            route_click(child, event, CLICK_DECORATION);
+            route_click(child, event, CLICK_DECORATION, deviceid);
             return;
         }
     }
 
     if (event->child != XCB_NONE) {
         DLOG("event->child not XCB_NONE, so this is an event which originated from a click into the application, but the application did not handle it.\n");
-        route_click(con, event, CLICK_INSIDE);
+        route_click(con, event, CLICK_INSIDE, deviceid);
         return;
     }
 
-    route_click(con, event, CLICK_BORDER);
+    route_click(con, event, CLICK_BORDER, deviceid);
 }

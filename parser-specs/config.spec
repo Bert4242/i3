@@ -57,6 +57,7 @@ state INITIAL:
   'restart_state'                          -> RESTART_STATE
   'popup_during_fullscreen'                -> POPUP_DURING_FULLSCREEN
   'tiling_drag'                            -> TILING_DRAG
+  'focus_ignore_pointer'                   -> FOCUS_IGNORE_POINTER
   exectype = 'exec_always', 'exec'         -> EXEC
   colorclass = 'client.background'
       -> COLOR_SINGLE
@@ -357,6 +358,18 @@ state WORKSPACE_OUTPUT_WORD:
       -> call cfg_workspace($workspace, $output); WORKSPACE_OUTPUT_WORD
   end
       -> INITIAL
+
+# focus_ignore_pointer <device name>
+#
+# Marks an XInput2 master pointer (as named by, e.g., `xinput list`) as one
+# whose clicks/drags/scrolls should reach the window under it as normal,
+# but never change i3's focus. Repeatable. Has no effect if XInput2 is not
+# available on the X server, or if no master pointer currently has this
+# name (re-checked on every XIHierarchyChanged event, so plugging in the
+# device later is picked up without a restart).
+state FOCUS_IGNORE_POINTER:
+  devicename = string
+      -> call cfg_focus_ignore_pointer($devicename)
 
 # ipc-socket <path>
 state IPC_SOCKET:

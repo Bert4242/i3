@@ -78,6 +78,13 @@ static void free_configuration(void) {
         FREE(assign);
     }
 
+    while (!TAILQ_EMPTY(&focus_ignore_pointers)) {
+        struct focus_ignore_pointer *ignored = TAILQ_FIRST(&focus_ignore_pointers);
+        FREE(ignored->name);
+        TAILQ_REMOVE(&focus_ignore_pointers, ignored, focus_ignore_pointers);
+        FREE(ignored);
+    }
+
     /* Clear bar configs */
     while (!TAILQ_EMPTY(&barconfigs)) {
         Barconfig *barconfig = TAILQ_FIRST(&barconfigs);

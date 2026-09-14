@@ -32,6 +32,7 @@
 #include <xcb/xcb_keysyms.h>
 #include <xcb/xkb.h>
 #include <xcb/xcb_aux.h>
+#include <xcb/xinput.h>
 
 #include "libi3.h"
 #include "data.h"
@@ -40,6 +41,7 @@
 #include "tree.h"
 #include "log.h"
 #include "xcb.h"
+#include "xinput.h"
 #include "manage.h"
 #include "workspace.h"
 #include "i3.h"

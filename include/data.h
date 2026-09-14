@@ -398,6 +398,17 @@ struct output_name {
 };
 
 /**
+ * Holds the name of an XInput2 master pointer which should be allowed to
+ * click/drag/scroll windows without ever moving i3's focus, as configured
+ * via the focus_ignore_pointer directive (see src/xinput.c).
+ *
+ */
+struct focus_ignore_pointer {
+    char *name;
+    TAILQ_ENTRY(focus_ignore_pointer) focus_ignore_pointers;
+};
+
+/**
  * An Output is a physical output on your graphics driver. Outputs which
  * are currently in use have (output->active == true). Each output has a
  * position and a mode. An output usually corresponds to one connected

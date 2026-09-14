@@ -574,6 +574,12 @@ CFGFUN(workspace, const char *workspace, const char *output) {
     TAILQ_INSERT_TAIL(&ws_assignments, assignment, ws_assignments);
 }
 
+CFGFUN(focus_ignore_pointer, const char *devicename) {
+    struct focus_ignore_pointer *ignored = scalloc(1, sizeof(struct focus_ignore_pointer));
+    ignored->name = sstrdup(devicename);
+    TAILQ_INSERT_TAIL(&focus_ignore_pointers, ignored, focus_ignore_pointers);
+}
+
 CFGFUN(ipc_socket, const char *path) {
     free(config.ipc_socket_path);
     config.ipc_socket_path = sstrdup(path);

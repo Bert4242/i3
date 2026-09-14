@@ -194,7 +194,11 @@ void regrab_all_buttons(xcb_connection_t *conn) {
             continue;
         }
 
-        xcb_ungrab_button(conn, XCB_BUTTON_INDEX_ANY, con->window->id, XCB_BUTTON_MASK_ANY);
+        if (xinput_supported) {
+            xinput_ungrab_buttons(conn, con->window->id);
+        } else {
+            xcb_ungrab_button(conn, XCB_BUTTON_INDEX_ANY, con->window->id, XCB_BUTTON_MASK_ANY);
+        }
         xcb_grab_buttons(conn, con->window->id, buttons);
     }
 

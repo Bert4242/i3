@@ -1457,6 +1457,14 @@ void handle_event(int type, xcb_generic_event_t *event) {
         return;
     }
 
+    if (xinput_supported && type == XCB_GE_GENERIC) {
+        xcb_ge_generic_event_t *generic = (xcb_ge_generic_event_t *)event;
+        if (generic->extension == xinput_opcode) {
+            xinput_handle_event(event);
+            return;
+        }
+    }
+
     if (shape_supported && type == shape_base + XCB_SHAPE_NOTIFY) {
         xcb_shape_notify_event_t *shape = (xcb_shape_notify_event_t *)event;
 
@@ -1486,7 +1494,14 @@ void handle_event(int type, xcb_generic_event_t *event) {
 
         case XCB_BUTTON_PRESS:
         case XCB_BUTTON_RELEASE:
-            handle_button_press((xcb_button_press_event_t *)event);
+            /* These are core-protocol button events, which after this patch
+             * only ever occur for the root window (client windows and frame
+             * decorations now deliver clicks via XInput2, see xinput.c).
+             * XCB_INPUT_DEVICE_ALL_MASTER is a reserved XInput2 device id
+             * that can never match a resolved focus_ignore_pointer device,
+             * so this is a safe "not applicable" placeholder: root window
+             * clicks never reach the focus-gating logic in route_click(). */
+            handle_button_press((xcb_button_press_event_t *)event, XCB_INPUT_DEVICE_ALL_MASTER);
             break;
 
         case XCB_MAP_REQUEST:

@@ -29,10 +29,16 @@
                           XCB_EVENT_MASK_STRUCTURE_NOTIFY | \
                           XCB_EVENT_MASK_FOCUS_CHANGE)
 
-/** The XCB_CW_EVENT_MASK for its frame */
-#define FRAME_EVENT_MASK (XCB_EVENT_MASK_BUTTON_PRESS | /* …mouse is pressed/released */                       \
-                          XCB_EVENT_MASK_BUTTON_RELEASE |                                                      \
-                          XCB_EVENT_MASK_POINTER_MOTION |        /* …mouse is moved */                         \
+/** The XCB_CW_EVENT_MASK for its frame.
+ *
+ * Button press/release are intentionally NOT part of this core protocol
+ * mask: they are selected separately via XInput2 (see
+ * xinput_select_button_events(), called once when the frame window is
+ * created), which lets handle_button_press() know which pointer device a
+ * click came from. This is what focus_ignore_pointer needs (see
+ * xinput.c). Selecting them here as well would deliver every decoration
+ * click twice, once via each protocol. */
+#define FRAME_EVENT_MASK (XCB_EVENT_MASK_POINTER_MOTION |        /* …mouse is moved */                         \
                           XCB_EVENT_MASK_EXPOSURE |              /* …our window needs to be redrawn */         \
                           XCB_EVENT_MASK_STRUCTURE_NOTIFY |      /* …the frame gets destroyed */               \
                           XCB_EVENT_MASK_SUBSTRUCTURE_REDIRECT | /* …the application tries to resize itself */ \

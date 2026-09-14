@@ -169,6 +169,12 @@ void x_con_init(Con *con) {
 
     Rect dims = {-15, -15, 10, 10};
     xcb_window_t frame_id = create_window(conn, dims, con->depth, visual, XCB_WINDOW_CLASS_INPUT_OUTPUT, XCURSOR_CURSOR_POINTER, false, mask, values);
+    /* Select button press/release via XInput2 (see include/xcb.h,
+     * FRAME_EVENT_MASK) so that decoration clicks carry a device id. This
+     * selection is independent of (and unaffected by) the core protocol
+     * event mask toggling done elsewhere on this window (e.g. during
+     * reparenting or resize), so it only needs to happen once. */
+    xinput_select_button_events(conn, frame_id);
     draw_util_surface_init(conn, &(con->frame), frame_id, get_visualtype_by_id(visual), dims.width, dims.height);
     xcb_change_property(conn,
                         XCB_PROP_MODE_REPLACE,

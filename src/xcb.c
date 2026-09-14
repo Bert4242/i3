@@ -265,6 +265,15 @@ release_grab:
  *
  */
 void xcb_grab_buttons(xcb_connection_t *conn, xcb_window_t window, int *buttons) {
+    /* When XInput2 is supported, grabbing via XInput2 instead of the core
+     * protocol lets handle_button_press() know which master pointer
+     * (device) a click came from, which is what focus_ignore_pointer needs
+     * (see xinput.c). Otherwise, fall back to i3's original core grab. */
+    if (xinput_supported) {
+        xinput_grab_buttons(conn, window, buttons);
+        return;
+    }
+
     int i = 0;
     while (buttons[i] > 0) {
         xcb_grab_button(conn, false, window, XCB_EVENT_MASK_BUTTON_PRESS, XCB_GRAB_MODE_SYNC,
