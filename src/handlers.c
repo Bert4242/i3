@@ -128,7 +128,7 @@ static void check_crossing_screen_boundary(uint32_t x, uint32_t y) {
  * When the user moves the mouse pointer onto a window, this callback gets called.
  *
  */
-static void handle_enter_notify(xcb_enter_notify_event_t *event, uint32_t full_sequence) {
+void handle_enter_notify(xcb_enter_notify_event_t *event, uint32_t full_sequence) {
     Con *con;
 
     last_timestamp = event->time;
@@ -208,7 +208,7 @@ static void handle_enter_notify(xcb_enter_notify_event_t *event, uint32_t full_s
  * and crossing virtual screen boundaries), this callback gets called.
  *
  */
-static void handle_motion_notify(xcb_motion_notify_event_t *event) {
+void handle_motion_notify(xcb_motion_notify_event_t *event) {
     last_timestamp = event->time;
 
     /* Skip events where the pointer was over a child window, we are only

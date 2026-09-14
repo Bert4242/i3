@@ -529,6 +529,61 @@ bool seat_focuses_con(Con *con) {
     return false;
 }
 
+xcb_input_device_id_t seat_first_pointer(Seat *seat) {
+    struct seat_input *input;
+    TAILQ_FOREACH (input, &(seat->inputs), inputs) {
+        if (input->pointer != SEAT_DEVICE_NONE) {
+            return input->pointer;
+        }
+    }
+    return SEAT_DEVICE_NONE;
+}
+
+bool seat_query_pointer(Seat *seat, int16_t *x, int16_t *y) {
+    if (xinput_query_pointer(conn, seat_first_pointer(seat), x, y)) {
+        return true;
+    }
+    xcb_query_pointer_reply_t *reply = xcb_query_pointer_reply(conn, xcb_query_pointer(conn, root), NULL);
+    if (reply == NULL) {
+        return false;
+    }
+    *x = reply->root_x;
+    *y = reply->root_y;
+    free(reply);
+    return true;
+}
+
+void seat_init_focus(void) {
+    Seat *seat;
+    TAILQ_FOREACH (seat, &seats, seats) {
+        if (seat_is_inactive(seat)) {
+            /* Follows the default seat, see seat_repair_focus(). */
+            continue;
+        }
+
+        Con *output = NULL;
+        int16_t x, y;
+        if (seat_query_pointer(seat, &x, &y)) {
+            DLOG("seat \"%s\": pointer at %d, %d\n", seat->name, x, y);
+            Output *containing = get_output_containing(x, y);
+            if (containing != NULL && seat_owns_output(seat, containing->con)) {
+                output = containing->con;
+            }
+        }
+        if (output == NULL && seat->output_mode == SEAT_OUTPUTS_NAMED) {
+            output = seat_first_owned_output(seat);
+        }
+        if (output == NULL) {
+            output = get_first_output()->con;
+        }
+        seat->focused = con_descend_focused(output_get_content(output));
+        seat->focused_id = XCB_NONE;
+    }
+
+    seat_make_current(default_seat);
+    con_activate(default_seat->focused);
+}
+
 Seat *seat_with_keyboard_focus(xcb_window_t window) {
     if (!xinput_supported) {
         return current_seat;

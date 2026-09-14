@@ -35,13 +35,13 @@ DRAGGING_CB(resize_callback) {
          * if threshold wasn't enabled, but also take into account travelled
          * distance. */
         if (params->orientation == HORIZ) {
-            xcb_warp_pointer(conn, XCB_NONE, event->root, 0, 0, 0, 0,
-                             *params->new_position + new_x - event->root_x,
-                             new_y);
+            xinput_warp_pointer(conn, xinput_last_event_device, event->root,
+                                *params->new_position + new_x - event->root_x,
+                                new_y);
         } else {
-            xcb_warp_pointer(conn, XCB_NONE, event->root, 0, 0, 0, 0,
-                             new_x,
-                             *params->new_position + new_y - event->root_y);
+            xinput_warp_pointer(conn, xinput_last_event_device, event->root,
+                                new_x,
+                                *params->new_position + new_y - event->root_y);
         }
         *params->threshold_exceeded = true;
         return;
@@ -240,11 +240,11 @@ void resize_graphical_handler(Con *first, Con *second, orientation_t orientation
     if (!use_threshold) {
         xcb_map_window(conn, helpwin);
         if (orientation == HORIZ) {
-            xcb_warp_pointer(conn, XCB_NONE, event->root, 0, 0, 0, 0,
-                             initial_position, event->root_y);
+            xinput_warp_pointer(conn, xinput_last_event_device, event->root,
+                                initial_position, event->root_y);
         } else {
-            xcb_warp_pointer(conn, XCB_NONE, event->root, 0, 0, 0, 0,
-                             event->root_x, initial_position);
+            xinput_warp_pointer(conn, xinput_last_event_device, event->root,
+                                event->root_x, initial_position);
         }
     }
 

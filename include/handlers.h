@@ -12,6 +12,20 @@
 
 #include <config.h>
 
+/**
+ * When the user moves the mouse pointer onto a window, this callback gets
+ * called (with core events, or via xinput_handle_event() with translated
+ * XInput2 events).
+ *
+ */
+void handle_enter_notify(xcb_enter_notify_event_t *event, uint32_t full_sequence);
+
+/**
+ * When the user moves the mouse pointer over a frame or the root window.
+ *
+ */
+void handle_motion_notify(xcb_motion_notify_event_t *event);
+
 #include <xcb/randr.h>
 
 #include "data.h"

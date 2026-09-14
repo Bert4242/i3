@@ -27,13 +27,60 @@ uint8_t xinput_opcode = 0;
 xcb_input_device_id_t xinput_last_event_device = XCB_INPUT_DEVICE_ALL_MASTER;
 
 /* OR'd into FRAME_EVENT_MASK and ROOT_EVENT_MASK (see include/xcb.h). Starts
- * out as the pre-XInput2 core button bits so that windows created before
+ * out as the pre-XInput2 core pointer bits so that windows created before
  * xinput_init() has run (or on a server where it turns out XInput2 isn't
- * usable) keep receiving button press/release the old way. xinput_init()
- * clears this to 0 once XInput2 button delivery is confirmed working, so
- * that later window creations don't select button events twice (once per
- * protocol). */
-uint32_t xinput_core_button_fallback_mask = XCB_EVENT_MASK_BUTTON_PRESS | XCB_EVENT_MASK_BUTTON_RELEASE;
+ * usable) keep receiving pointer events the old way. xinput_init() clears
+ * this to 0 once XInput2 delivery is confirmed working, so that later
+ * window creations don't select pointer events twice (once per protocol). */
+uint32_t xinput_core_fallback_mask = XCB_EVENT_MASK_BUTTON_PRESS | XCB_EVENT_MASK_BUTTON_RELEASE |
+                                     XCB_EVENT_MASK_POINTER_MOTION | XCB_EVENT_MASK_ENTER_WINDOW;
+
+/*
+ * Converts an XInput2 enter event into the core xcb_enter_notify_event_t
+ * shape consumed by handle_enter_notify().
+ *
+ */
+static void xinput_translate_enter_event(const xcb_input_enter_event_t *xi_event, xcb_enter_notify_event_t *event) {
+    memset(event, '\0', sizeof(xcb_enter_notify_event_t));
+    event->response_type = XCB_ENTER_NOTIFY;
+    event->detail = xi_event->detail;
+    event->sequence = xi_event->sequence;
+    event->time = xi_event->time;
+    event->root = xi_event->root;
+    event->event = xi_event->event;
+    event->child = xi_event->child;
+    event->root_x = (int16_t)(xi_event->root_x >> 16);
+    event->root_y = (int16_t)(xi_event->root_y >> 16);
+    event->event_x = (int16_t)(xi_event->event_x >> 16);
+    event->event_y = (int16_t)(xi_event->event_y >> 16);
+    event->state = (uint16_t)xi_event->mods.effective;
+    /* XInput2 has two more modes (PassiveGrab/PassiveUngrab); like the core
+     * grab modes they are simply "not normal" for handle_enter_notify(). */
+    event->mode = xi_event->mode;
+    event->same_screen_focus = (xi_event->same_screen ? 2 : 0) | (xi_event->focus ? 1 : 0);
+}
+
+/*
+ * Converts an XInput2 motion event into the core xcb_motion_notify_event_t
+ * shape consumed by handle_motion_notify().
+ *
+ */
+static void xinput_translate_motion_notify(const xcb_input_motion_event_t *xi_event, xcb_motion_notify_event_t *event) {
+    memset(event, '\0', sizeof(xcb_motion_notify_event_t));
+    event->response_type = XCB_MOTION_NOTIFY;
+    event->detail = XCB_MOTION_NORMAL;
+    event->sequence = xi_event->sequence;
+    event->time = xi_event->time;
+    event->root = xi_event->root;
+    event->event = xi_event->event;
+    event->child = xi_event->child;
+    event->root_x = (int16_t)(xi_event->root_x >> 16);
+    event->root_y = (int16_t)(xi_event->root_y >> 16);
+    event->event_x = (int16_t)(xi_event->event_x >> 16);
+    event->event_y = (int16_t)(xi_event->event_y >> 16);
+    event->state = (uint16_t)xi_event->mods.effective;
+    event->same_screen = true;
+}
 
 /* Master keyboards which currently hold XInput2 keycode grabs, so that
  * xinput_ungrab_all_keys() ungrabs exactly those (a device which has since
@@ -120,12 +167,29 @@ void xinput_init(void) {
 
     /* This runs before tree_init()/manage_existing_windows(), i.e. before
      * any client or frame window exists yet, so it's safe to clear this
-     * now: every window created from here on will select/grab button
+     * now: every window created from here on will select/grab pointer
      * events via XInput2 instead (xinput_grab_buttons(),
-     * xinput_select_button_events(), and root below), and
-     * FRAME_EVENT_MASK/ROOT_EVENT_MASK must stop asking for core button
-     * delivery too, or every click would be delivered twice. */
-    xinput_core_button_fallback_mask = 0;
+     * xinput_select_frame_events(), and root below), and
+     * FRAME_EVENT_MASK/ROOT_EVENT_MASK must stop asking for core delivery
+     * too, or every event would be delivered twice. */
+    xinput_core_fallback_mask = 0;
+
+    xinput_select_root_events(conn, true);
+
+    /* The root window's core event mask was already set once (in main(),
+     * before this function runs) using the pre-negotiation fallback value
+     * of xinput_core_fallback_mask. Re-apply it now that the fallback is
+     * cleared, so root doesn't keep double-selecting pointer events at the
+     * core protocol level too. */
+    xcb_change_window_attributes(conn, root, XCB_CW_EVENT_MASK, (uint32_t[]){ROOT_EVENT_MASK});
+
+    seat_apply_config();
+}
+
+void xinput_select_root_events(xcb_connection_t *conn, bool pointer) {
+    if (!xinput_supported) {
+        return;
+    }
 
     /* Select, in one request:
      *  - XIHierarchyChanged on all devices, so that a seat's master which
@@ -133,40 +197,58 @@ void xinput_init(void) {
      *    script creating it after i3 has already come up) is picked up
      *    without requiring an i3 restart.
      *  - button press (not release: root has no use for it, see the
-     *    ROOT_EVENT_MASK comment in include/xcb.h) on all (current and
-     *    future) master pointers, so that clicks on the root window
-     *    (empty desktop) carry a device id too, the same as client and
-     *    frame window clicks. */
+     *    ROOT_EVENT_MASK comment in include/xcb.h), motion and enter on all
+     *    (current and future) master pointers, so that pointer events on
+     *    the root window (empty desktop) carry a device id too, the same as
+     *    client and frame window events. */
     struct {
         xcb_input_event_mask_t header;
         uint32_t mask;
     } root_masks[2] = {
         {.header = {.deviceid = XCB_INPUT_DEVICE_ALL, .mask_len = 1}, .mask = XCB_INPUT_XI_EVENT_MASK_HIERARCHY},
-        {.header = {.deviceid = XCB_INPUT_DEVICE_ALL_MASTER, .mask_len = 1}, .mask = XCB_INPUT_XI_EVENT_MASK_BUTTON_PRESS},
+        {.header = {.deviceid = XCB_INPUT_DEVICE_ALL_MASTER, .mask_len = 1},
+         .mask = XCB_INPUT_XI_EVENT_MASK_BUTTON_PRESS |
+                 (pointer ? (XCB_INPUT_XI_EVENT_MASK_MOTION | XCB_INPUT_XI_EVENT_MASK_ENTER) : 0)},
     };
     xcb_input_xi_select_events(conn, root, 2, (xcb_input_event_mask_t *)root_masks);
-
-    /* The root window's core event mask was already set once (in main(),
-     * before this function runs) using the pre-negotiation fallback value
-     * of xinput_core_button_fallback_mask. Re-apply it now that the
-     * fallback is cleared, so root doesn't keep double-selecting button
-     * events at the core protocol level too. */
-    xcb_change_window_attributes(conn, root, XCB_CW_EVENT_MASK, (uint32_t[]){ROOT_EVENT_MASK});
-
-    seat_apply_config();
 }
 
-void xinput_select_button_events(xcb_connection_t *conn, xcb_window_t window) {
+void xinput_select_frame_events(xcb_connection_t *conn, xcb_window_t window, bool enter) {
     if (!xinput_supported) {
         return;
     }
 
-    xcb_input_event_mask_t *mask = scalloc(1, sizeof(xcb_input_event_mask_t) + sizeof(uint32_t));
-    mask->deviceid = XCB_INPUT_DEVICE_ALL_MASTER;
-    mask->mask_len = 1;
-    *((uint32_t *)(mask + 1)) = XCB_INPUT_XI_EVENT_MASK_BUTTON_PRESS | XCB_INPUT_XI_EVENT_MASK_BUTTON_RELEASE;
-    xcb_input_xi_select_events(conn, window, 1, mask);
-    free(mask);
+    struct {
+        xcb_input_event_mask_t header;
+        uint32_t mask;
+    } frame_mask = {
+        .header = {.deviceid = XCB_INPUT_DEVICE_ALL_MASTER, .mask_len = 1},
+        .mask = XCB_INPUT_XI_EVENT_MASK_BUTTON_PRESS | XCB_INPUT_XI_EVENT_MASK_BUTTON_RELEASE |
+                XCB_INPUT_XI_EVENT_MASK_MOTION | (enter ? XCB_INPUT_XI_EVENT_MASK_ENTER : 0),
+    };
+    xcb_input_xi_select_events(conn, window, 1, (xcb_input_event_mask_t *)&frame_mask);
+}
+
+bool xinput_query_pointer(xcb_connection_t *conn, xcb_input_device_id_t deviceid, int16_t *x, int16_t *y) {
+    if (!xinput_supported || deviceid == SEAT_DEVICE_NONE || deviceid == XCB_INPUT_DEVICE_ALL_MASTER) {
+        return false;
+    }
+    xcb_input_xi_query_pointer_reply_t *reply = xcb_input_xi_query_pointer_reply(conn, xcb_input_xi_query_pointer(conn, root, deviceid), NULL);
+    if (reply == NULL) {
+        return false;
+    }
+    *x = (int16_t)(reply->root_x >> 16);
+    *y = (int16_t)(reply->root_y >> 16);
+    free(reply);
+    return true;
+}
+
+void xinput_warp_pointer(xcb_connection_t *conn, xcb_input_device_id_t deviceid, xcb_window_t window, int16_t x, int16_t y) {
+    if (!xinput_supported || deviceid == SEAT_DEVICE_NONE || deviceid == XCB_INPUT_DEVICE_ALL_MASTER) {
+        xcb_warp_pointer(conn, XCB_NONE, window, 0, 0, 0, 0, x, y);
+        return;
+    }
+    xcb_input_xi_warp_pointer(conn, XCB_NONE, window, 0, 0, 0, 0, ((int32_t)x) << 16, ((int32_t)y) << 16, deviceid);
 }
 
 void xinput_grab_buttons(xcb_connection_t *conn, xcb_window_t window, int *buttons) {
@@ -301,6 +383,24 @@ void xinput_handle_event(xcb_generic_event_t *event) {
             xcb_key_press_event_t translated;
             xinput_translate_key_event(xi_event, &translated);
             handle_key_press(&translated, xi_event->deviceid);
+            break;
+        }
+
+        case XCB_INPUT_ENTER: {
+            xcb_input_enter_event_t *xi_event = (xcb_input_enter_event_t *)event;
+            xcb_enter_notify_event_t translated;
+            xinput_translate_enter_event(xi_event, &translated);
+            seat_make_active(seat_for_device(xi_event->deviceid));
+            handle_enter_notify(&translated, xi_event->full_sequence);
+            break;
+        }
+
+        case XCB_INPUT_MOTION: {
+            xcb_input_motion_event_t *xi_event = (xcb_input_motion_event_t *)event;
+            xcb_motion_notify_event_t translated;
+            xinput_translate_motion_notify(xi_event, &translated);
+            seat_make_active(seat_for_device(xi_event->deviceid));
+            handle_motion_notify(&translated);
             break;
         }
 

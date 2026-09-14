@@ -41,13 +41,13 @@ extern uint8_t xinput_opcode;
 extern xcb_input_device_id_t xinput_last_event_device;
 
 /** OR'd into FRAME_EVENT_MASK and ROOT_EVENT_MASK (see include/xcb.h) so
- * that those macros ask for core-protocol button press/release delivery
- * exactly when XInput2 isn't (yet, or ever) doing it instead: it starts as
- * the core button bits and xinput_init() clears it to 0 once XInput2
- * button delivery is confirmed working. This keeps every existing
+ * that those macros ask for core-protocol button press/release, motion and
+ * enter delivery exactly when XInput2 isn't (yet, or ever) doing it
+ * instead: it starts as the core bits and xinput_init() clears it to 0
+ * once XInput2 delivery is confirmed working. This keeps every existing
  * FRAME_EVENT_MASK/ROOT_EVENT_MASK use site correct without having to
  * touch each one individually. */
-extern uint32_t xinput_core_button_fallback_mask;
+extern uint32_t xinput_core_fallback_mask;
 
 /**
  * Queries the XInput2 extension, negotiates a version, subscribes to
@@ -86,12 +86,39 @@ void xinput_grab_buttons(xcb_connection_t *conn, xcb_window_t window, int *butto
 void xinput_ungrab_buttons(xcb_connection_t *conn, xcb_window_t window);
 
 /**
- * Selects XInput2 button press/release events (in addition to i3's normal
- * core protocol events) on the given frame/decoration window, so that
- * clicks on window decorations also carry a device id.
+ * Selects XInput2 button press/release and motion events (and, if `enter`
+ * is set, enter events) on the given frame/decoration window for all
+ * master pointers, so that pointer events on decorations carry a device
+ * id. The XInput2 counterpart of setting FRAME_EVENT_MASK (with or without
+ * XCB_EVENT_MASK_ENTER_WINDOW) on the window; call it wherever the core
+ * mask is toggled.
  *
  */
-void xinput_select_button_events(xcb_connection_t *conn, xcb_window_t window);
+void xinput_select_frame_events(xcb_connection_t *conn, xcb_window_t window, bool enter);
+
+/**
+ * The root window counterpart of xinput_select_frame_events(): selects
+ * hierarchy changes on all devices plus button press (and, if `pointer`
+ * is set, motion and enter) on all master pointers.
+ *
+ */
+void xinput_select_root_events(xcb_connection_t *conn, bool pointer);
+
+/**
+ * Queries the position of the given master pointer. Returns false (and
+ * leaves x/y untouched) if XInput2 isn't in use, the device is unknown or
+ * the query failed.
+ *
+ */
+bool xinput_query_pointer(xcb_connection_t *conn, xcb_input_device_id_t deviceid, int16_t *x, int16_t *y);
+
+/**
+ * Warps the given master pointer to the given position relative to
+ * `window`, or the core pointer when XInput2 isn't in use or the device is
+ * not a specific master pointer.
+ *
+ */
+void xinput_warp_pointer(xcb_connection_t *conn, xcb_input_device_id_t deviceid, xcb_window_t window, int16_t x, int16_t y);
 
 /**
  * Installs an XInput2 passive keycode grab on the root window for the given

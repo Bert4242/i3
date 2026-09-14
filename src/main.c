@@ -652,7 +652,6 @@ int main(int argc, char *argv[]) {
     DLOG("One logical pixel corresponds to %d physical pixels on this display.\n", logical_px(1));
 
     xcb_get_geometry_cookie_t gcookie = xcb_get_geometry(conn, root);
-    xcb_query_pointer_cookie_t pointercookie = xcb_query_pointer(conn, root);
 
     /* Get the PropertyNotify event we caused above */
     xcb_flush(conn);
@@ -993,23 +992,8 @@ int main(int argc, char *argv[]) {
 
     scratchpad_fix_resolution();
 
-    Output *output = NULL;
-    xcb_query_pointer_reply_t *pointer_reply = xcb_query_pointer_reply(conn, pointercookie, NULL);
-    if (!pointer_reply) {
-        ELOG("Could not query pointer position, using first screen\n");
-    } else {
-        DLOG("Pointer at %d, %d\n", pointer_reply->root_x, pointer_reply->root_y);
-        output = get_output_containing(pointer_reply->root_x, pointer_reply->root_y);
-        if (!output) {
-            ELOG("ERROR: No screen at (%d, %d), starting on the first screen\n",
-                 pointer_reply->root_x, pointer_reply->root_y);
-        }
-    }
-    if (!output) {
-        output = get_first_output();
-    }
-    con_activate(con_descend_focused(output_get_content(output->con)));
-    free(pointer_reply);
+    /* Every seat starts out focusing the output its pointer is on. */
+    seat_init_focus();
 
     tree_render();
 

@@ -271,3 +271,25 @@ bool seat_focuses_con(Con *con);
  *
  */
 Seat *seat_with_keyboard_focus(xcb_window_t window);
+
+/**
+ * Returns the seat's first resolved master pointer, or SEAT_DEVICE_NONE.
+ *
+ */
+xcb_input_device_id_t seat_first_pointer(Seat *seat);
+
+/**
+ * Queries the position of the seat's pointer (the core pointer when
+ * XInput2 isn't in use or the seat has no pointer). Returns false if the
+ * position could not be determined.
+ *
+ */
+bool seat_query_pointer(Seat *seat, int16_t *x, int16_t *y);
+
+/**
+ * Sets every seat's initial focus at startup: the focused container of the
+ * output its pointer is on (restricted seats: one of their outputs), and
+ * activates the default seat's.
+ *
+ */
+void seat_init_focus(void);

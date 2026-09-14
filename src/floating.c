@@ -537,22 +537,21 @@ void floating_center(Con *con, Rect rect) {
 void floating_move_to_pointer(Con *con) {
     assert(con->type == CT_FLOATING_CON);
 
-    xcb_query_pointer_reply_t *reply = xcb_query_pointer_reply(conn, xcb_query_pointer(conn, root), NULL);
-    if (reply == NULL) {
+    int16_t pointer_x, pointer_y;
+    if (!seat_query_pointer(current_seat, &pointer_x, &pointer_y)) {
         ELOG("could not query pointer position, not moving this container\n");
         return;
     }
 
-    Output *output = get_output_containing(reply->root_x, reply->root_y);
+    Output *output = get_output_containing(pointer_x, pointer_y);
     if (output == NULL) {
         ELOG("The pointer is not on any output, cannot move the container here.\n");
         return;
     }
 
     /* Determine where to put the window. */
-    int32_t x = reply->root_x - con->rect.width / 2;
-    int32_t y = reply->root_y - con->rect.height / 2;
-    FREE(reply);
+    int32_t x = pointer_x - con->rect.width / 2;
+    int32_t y = pointer_y - con->rect.height / 2;
 
     /* Correct target coordinates to be in-bounds. */
     x = MAX(x, (int32_t)output->rect.x);
