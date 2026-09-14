@@ -399,8 +399,8 @@ static void route_click(Con *con, xcb_button_press_event_t *event, const click_d
  */
 void handle_button_press(xcb_button_press_event_t *event, xcb_input_device_id_t deviceid) {
     Con *con;
-    DLOG("Button %d (state %d) %s on window 0x%08x (child 0x%08x) at (%d, %d) (root %d, %d)\n",
-         event->detail, event->state, (event->response_type == XCB_BUTTON_PRESS ? "press" : "release"),
+    DLOG("Button %d (state %d, device %d) %s on window 0x%08x (child 0x%08x) at (%d, %d) (root %d, %d)\n",
+         event->detail, event->state, deviceid, (event->response_type == XCB_BUTTON_PRESS ? "press" : "release"),
          event->event, event->child, event->event_x, event->event_y, event->root_x,
          event->root_y);
 

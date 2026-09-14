@@ -923,7 +923,22 @@ static void move_content(Con *con) {
  * If no outputs are found use the root window.
  *
  */
+static void randr_query_outputs_impl(void);
+
+/*
+ * Output changes are handled as the default seat: a restricted seat must not
+ * be able to prevent a new output from getting its workspace shown (see the
+ * seat gate in workspace_show()).
+ *
+ */
 void randr_query_outputs(void) {
+    Seat *previous_seat = current_seat;
+    seat_make_current(default_seat);
+    randr_query_outputs_impl();
+    seat_make_current(previous_seat);
+}
+
+static void randr_query_outputs_impl(void) {
     if (!randr_query_outputs_15()) {
         randr_query_outputs_14();
     }

@@ -265,6 +265,7 @@ bool tree_close_internal(Con *con, kill_window_t kill_window, bool dont_kill_par
     /* Figure out which container to focus next before detaching 'con'. */
     Con *next = (con == focused) ? con_next_focused(con) : NULL;
     DLOG("next = %p, focused = %p\n", next, focused);
+    seat_con_closing(con);
 
     /* Detach the container so that it will not be rendered anymore. */
     con_detach(con);
@@ -593,6 +594,10 @@ handle_workspace:;
 void tree_next(Con *con, direction_t direction) {
     Con *next = get_tree_next(con, direction);
     if (!next) {
+        return;
+    }
+    if (!seat_may_focus(current_seat, next)) {
+        DLOG("seat \"%s\" may not focus %p, staying put\n", current_seat->name, next);
         return;
     }
     if (next->type == CT_WORKSPACE) {

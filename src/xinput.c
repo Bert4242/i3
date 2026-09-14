@@ -194,6 +194,7 @@ void xinput_handle_event(xcb_generic_event_t *event) {
             xcb_input_button_press_event_t *xi_event = (xcb_input_button_press_event_t *)event;
             xcb_button_press_event_t translated;
             xinput_translate_button_event(xi_event, &translated);
+            seat_make_active(seat_for_device(xi_event->deviceid));
             handle_button_press(&translated, xi_event->deviceid);
             break;
         }

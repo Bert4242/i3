@@ -96,6 +96,29 @@ extern Seat *last_active_seat;
 void seat_init(void);
 
 /**
+ * Makes the given seat the current one: the global `focused` and
+ * `focused_id` are stored into the previous current seat and loaded from
+ * the new one. A seat which never had a focus inherits the previous seat's.
+ *
+ */
+void seat_make_current(Seat *seat);
+
+/**
+ * seat_make_current() for a seat which just produced device input; also
+ * records it as the last active seat (the one IPC commands run as).
+ *
+ */
+void seat_make_active(Seat *seat);
+
+/**
+ * Stores the global `focused`/`focused_id` back into the current seat so
+ * that current_seat->focused is up to date (e.g. before iterating over all
+ * seats).
+ *
+ */
+void seat_store_current(void);
+
+/**
  * Returns the runtime seat with the given name, or NULL.
  *
  */
@@ -202,3 +225,42 @@ bool seat_may_focus(Seat *seat, Con *con);
  *
  */
 bool seat_is_inactive(Seat *seat);
+
+/**
+ * Makes sure the seat's focused container is usable: set (inheriting the
+ * default seat's focus), on a visible workspace and, for a restricted seat,
+ * on one of its outputs; re-points it otherwise. Call seat_store_current()
+ * before and reload `focused`/`focused_id` from current_seat afterward.
+ *
+ */
+void seat_repair_focus(Seat *seat);
+
+/**
+ * Called before a container is detached and freed: every other seat whose
+ * focus is (inside) the container is pointed at what would be focused next.
+ *
+ */
+void seat_con_closing(Con *con);
+
+/**
+ * Called by workspace_show() once `next` (on the newly shown workspace) is
+ * focused: every other seat whose focus lived on the now hidden workspace
+ * follows to `next`, since an unmapped window cannot hold keyboard focus.
+ *
+ */
+void seat_workspace_hidden(Con *old_ws, Con *next);
+
+/**
+ * Returns true if any active seat focuses the container or a container
+ * inside it (the multiseat version of `con == focused ||
+ * con_inside_focused(con)`).
+ *
+ */
+bool seat_focuses_con(Con *con);
+
+/**
+ * Returns the seat one of whose master keyboards currently has X11 focus
+ * on the given window (queried from the server), or NULL if none does.
+ *
+ */
+Seat *seat_with_keyboard_focus(xcb_window_t window);

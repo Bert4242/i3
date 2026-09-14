@@ -106,6 +106,10 @@ static void check_crossing_screen_boundary(uint32_t x, uint32_t y) {
         return;
     }
 
+    if (!seat_owns_output(current_seat, output->con)) {
+        return;
+    }
+
     /* Focus the output on which the user moved their cursor */
     Con *old_focused = focused;
     Con *next = con_descend_focused(output_get_content(output->con));
@@ -181,6 +185,10 @@ static void handle_enter_notify(xcb_enter_notify_event_t *event, uint32_t full_s
         return;
     }
 
+    if (!seat_may_focus(current_seat, con)) {
+        return;
+    }
+
     /* Get the currently focused workspace to check if the focus change also
      * involves changing workspaces. If so, we need to call workspace_show() to
      * correctly update state and send the IPC event. */
@@ -221,6 +229,10 @@ static void handle_motion_notify(xcb_motion_notify_event_t *event) {
     }
 
     if (con->layout != L_DEFAULT && con->layout != L_SPLITV && con->layout != L_SPLITH) {
+        return;
+    }
+
+    if (!seat_may_focus(current_seat, con)) {
         return;
     }
 
@@ -1065,6 +1077,13 @@ static void handle_focus_in(xcb_focus_in_event_t *event) {
     if (event->event == root) {
         DLOG("Received focus in for root window, refocusing the focused window.\n");
         con_focus(focused);
+        /* Core FocusIn does not say which master keyboard ended up on the
+         * root window, so refocus every seat. */
+        seat_store_current();
+        Seat *seat;
+        TAILQ_FOREACH (seat, &seats, seats) {
+            seat->focused_id = XCB_NONE;
+        }
         focused_id = XCB_NONE;
         x_push_changes(croot);
     }
@@ -1074,6 +1093,14 @@ static void handle_focus_in(xcb_focus_in_event_t *event) {
         return;
     }
     DLOG("That is con %p / %s\n", con, con->name);
+
+    /* Core FocusIn carries no device: ask the server which seat's keyboard
+     * landed on the window (a client sets focus for its ClientPointer's
+     * keyboard) and handle the event as that seat. */
+    Seat *seat = seat_with_keyboard_focus(event->event);
+    if (seat != NULL) {
+        seat_make_current(seat);
+    }
 
     if (event->mode == XCB_NOTIFY_MODE_GRAB ||
         event->mode == XCB_NOTIFY_MODE_UNGRAB) {

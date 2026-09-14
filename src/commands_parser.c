@@ -159,6 +159,15 @@ CommandResult *parse_command(const char *input, yajl_gen gen, ipc_client *client
     DLOG("COMMAND: *%.4000s*\n", input);
     struct cmd_parser_ctx cmd_ctx = {0};
 
+    /* Commands without a device behind them (IPC) run as the seat which
+     * most recently produced input; a binding's seat is already the active
+     * one. Restored on return so that a `seat <name>` command does not leak
+     * into the next command string. */
+#ifndef TEST_PARSER
+    Seat *previous_seat = current_seat;
+    seat_make_current(last_active_seat);
+#endif
+
     cmd_ctx.state = INITIAL;
     CommandResult *result = scalloc(1, sizeof(CommandResult));
 
@@ -364,6 +373,9 @@ CommandResult *parse_command(const char *input, yajl_gen gen, ipc_client *client
         TAILQ_REMOVE(&cmd_ctx.owindows, ow, owindows);
         free(ow);
     }
+#ifndef TEST_PARSER
+    seat_make_current(previous_seat);
+#endif
     return result;
 }
 

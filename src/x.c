@@ -16,16 +16,10 @@
 #define MAX(x, y) ((x) > (y) ? (x) : (y))
 #endif
 
-/* Stores the X11 window ID of the currently focused window */
+/* Stores the X11 window ID of the currently focused window of the current
+ * seat (swapped by seat_make_current(), like `focused`). The per-seat
+ * counterparts last_focused and warp_to live in struct Seat. */
 xcb_window_t focused_id = XCB_NONE;
-
-/* Because 'focused_id' might be reset to force input focus, we separately keep
- * track of the X11 window ID to be able to always tell whether the focused
- * window actually changed. */
-static xcb_window_t last_focused = XCB_NONE;
-
-/* Stores coordinates to warp mouse pointer to if set */
-static Rect *warp_to;
 
 /*
  * Describes the X11 state we may modify (map state, position, window stack).
@@ -100,24 +94,156 @@ static con_state *state_for_frame(xcb_window_t window) {
     return NULL;
 }
 
+static bool is_con_attached(Con *con);
+
 /*
  * Changes the atoms on the root window and the windows themselves to properly
  * reflect the current focus for ewmh compliance.
  *
  */
-static void change_ewmh_focus(xcb_window_t new_focus, xcb_window_t old_focus) {
+static void change_ewmh_focus(Seat *seat, xcb_window_t new_focus, xcb_window_t old_focus) {
     if (new_focus == old_focus) {
         return;
     }
 
-    ewmh_update_active_window(new_focus);
+    /* _NET_ACTIVE_WINDOW is a single window by the EWMH spec: it follows the
+     * seat currently acting. */
+    if (seat == current_seat) {
+        ewmh_update_active_window(new_focus);
+    }
 
     if (new_focus != XCB_WINDOW_NONE) {
         ewmh_update_focused(new_focus, true);
     }
 
     if (old_focus != XCB_WINDOW_NONE) {
+        /* Another seat may still focus the old window. */
+        Seat *other;
+        TAILQ_FOREACH (other, &seats, seats) {
+            if (other != seat && other->last_focused == old_focus) {
+                return;
+            }
+        }
         ewmh_update_focused(old_focus, false);
+    }
+}
+
+/*
+ * Sets the X11 keyboard focus of every master keyboard of the seat to the
+ * given window (or the core focus when XInput2 isn't available, in which
+ * case only the default seat exists in practice).
+ *
+ */
+static void x_set_seat_input_focus(Seat *seat, xcb_window_t window) {
+    if (!xinput_supported) {
+        if (seat == default_seat) {
+            xcb_set_input_focus(conn, XCB_INPUT_FOCUS_POINTER_ROOT, window, last_timestamp);
+        }
+        return;
+    }
+    struct seat_input *input;
+    TAILQ_FOREACH (input, &(seat->inputs), inputs) {
+        if (input->keyboard == SEAT_DEVICE_NONE) {
+            continue;
+        }
+        xcb_input_xi_set_focus(conn, window, last_timestamp, input->keyboard);
+    }
+}
+
+/*
+ * Makes the seat's first master pointer the ClientPointer of the client
+ * owning the window, so that core-protocol requests of that client (grabs,
+ * SetInputFocus, QueryPointer…) act on this seat's devices only.
+ *
+ */
+static void x_set_seat_client_pointer(Seat *seat, xcb_window_t window) {
+    if (!xinput_supported) {
+        return;
+    }
+    struct seat_input *input;
+    TAILQ_FOREACH (input, &(seat->inputs), inputs) {
+        if (input->pointer == SEAT_DEVICE_NONE) {
+            continue;
+        }
+        xcb_input_xi_set_client_pointer(conn, window, input->pointer);
+        return;
+    }
+}
+
+/*
+ * Pushes one seat's focus to X11: the part of x_push_changes() which used
+ * to deal with the single global focus.
+ *
+ */
+static void x_push_seat_focus(Seat *seat) {
+    /* An inactive seat's keyboards follow the default seat. */
+    Con *target = seat_is_inactive(seat) ? default_seat->focused : seat->focused;
+    if (target == NULL) {
+        return;
+    }
+
+    xcb_window_t to_focus = target->frame.id;
+    if (target->window != NULL) {
+        to_focus = target->window->id;
+    }
+
+    if (seat->focused_id != to_focus) {
+        if (!target->mapped) {
+            DLOG("Not updating focus of seat \"%s\" (to %p / %s), focused window is not mapped.\n", seat->name, target, target->name);
+            /* Invalidate focused_id to correctly focus new windows with the same ID */
+            seat->focused_id = XCB_NONE;
+        } else {
+            if (!seat_is_inactive(seat)) {
+                x_set_seat_client_pointer(seat, to_focus);
+            }
+            if (target->window != NULL &&
+                target->window->needs_take_focus &&
+                target->window->doesnt_accept_focus) {
+                DLOG("Updating focus of seat \"%s\" by sending WM_TAKE_FOCUS to window 0x%08x (focused: %p / %s)\n",
+                     seat->name, to_focus, target, target->name);
+                send_take_focus(to_focus, last_timestamp);
+
+                change_ewmh_focus(seat, (con_has_managed_window(target) ? target->window->id : XCB_WINDOW_NONE), seat->last_focused);
+
+                if (to_focus != seat->last_focused && is_con_attached(target)) {
+                    ipc_send_window_event("focus", target);
+                }
+            } else {
+                DLOG("Updating focus of seat \"%s\" (focused: %p / %s) to X11 window 0x%08x\n", seat->name, target, target->name, to_focus);
+                /* We remove XCB_EVENT_MASK_FOCUS_CHANGE from the event mask to get
+                 * no focus change events for our own focus changes. We only want
+                 * these generated by the clients. */
+                uint32_t values[1];
+                if (target->window != NULL) {
+                    values[0] = CHILD_EVENT_MASK & ~(XCB_EVENT_MASK_FOCUS_CHANGE);
+                    xcb_change_window_attributes(conn, target->window->id, XCB_CW_EVENT_MASK, values);
+                }
+                x_set_seat_input_focus(seat, to_focus);
+                if (target->window != NULL) {
+                    values[0] = CHILD_EVENT_MASK;
+                    xcb_change_window_attributes(conn, target->window->id, XCB_CW_EVENT_MASK, values);
+                }
+
+                change_ewmh_focus(seat, (con_has_managed_window(target) ? target->window->id : XCB_WINDOW_NONE), seat->last_focused);
+
+                if (to_focus != XCB_NONE && to_focus != seat->last_focused && target->window != NULL && is_con_attached(target)) {
+                    ipc_send_window_event("focus", target);
+                }
+            }
+
+            seat->focused_id = seat->last_focused = to_focus;
+        }
+    }
+
+    if (seat->focused_id == XCB_NONE) {
+        /* If we still have no window to focus, we focus the EWMH window instead. We use this rather than the
+         * root window in order to avoid an X11 fallback mechanism causing a ghosting effect (see #1378). */
+        DLOG("Still no window focused for seat \"%s\", better set focus to the EWMH support window (%d)\n", seat->name, ewmh_window);
+        x_set_seat_input_focus(seat, ewmh_window);
+        change_ewmh_focus(seat, XCB_WINDOW_NONE, seat->last_focused);
+
+        seat->focused_id = ewmh_window;
+        seat->last_focused = XCB_NONE;
     }
 }
 
@@ -279,8 +405,14 @@ static void _x_con_kill(Con *con) {
     if (con->frame.id == focused_id) {
         focused_id = XCB_NONE;
     }
-    if (con->frame.id == last_focused) {
-        last_focused = XCB_NONE;
+    Seat *seat;
+    TAILQ_FOREACH (seat, &seats, seats) {
+        if (con->frame.id == seat->focused_id) {
+            seat->focused_id = XCB_NONE;
+        }
+        if (con->frame.id == seat->last_focused) {
+            seat->last_focused = XCB_NONE;
+        }
     }
 }
 
@@ -501,7 +633,7 @@ void x_draw_decoration(Con *con) {
     /* find out which colors to use */
     if (con->urgent) {
         p->color = &config.client.urgent;
-    } else if (con == focused || con_inside_focused(con)) {
+    } else if (seat_focuses_con(con)) {
         p->color = &config.client.focused;
     } else if (con == TAILQ_FIRST(&(parent->focus_head))) {
         if (config.client.got_focused_tab_title && !leaf && con_descend_focused(con) == focused) {
@@ -1287,6 +1419,7 @@ static bool is_con_attached(Con *con) {
 void x_push_changes(Con *con) {
     con_state *state;
     xcb_query_pointer_cookie_t pointercookie;
+    Rect *warp_to = current_seat->warp_to;
 
     /* If we need to warp later, we request the pointer position as soon as possible */
     if (warp_to) {
@@ -1390,7 +1523,7 @@ void x_push_changes(Con *con) {
 
             free(pointerreply);
         }
-        warp_to = NULL;
+        current_seat->warp_to = NULL;
     }
 
     values[0] = FRAME_EVENT_MASK;
@@ -1402,65 +1535,16 @@ void x_push_changes(Con *con) {
 
     x_deco_recurse(con);
 
-    xcb_window_t to_focus = focused->frame.id;
-    if (focused->window != NULL) {
-        to_focus = focused->window->id;
+    /* Push every seat's focus. The default seat goes first so that inactive
+     * seats (which follow it) see its repaired focus. */
+    seat_store_current();
+    Seat *seat;
+    TAILQ_FOREACH (seat, &seats, seats) {
+        seat_repair_focus(seat);
+        x_push_seat_focus(seat);
     }
-
-    if (focused_id != to_focus) {
-        if (!focused->mapped) {
-            DLOG("Not updating focus (to %p / %s), focused window is not mapped.\n", focused, focused->name);
-            /* Invalidate focused_id to correctly focus new windows with the same ID */
-            focused_id = XCB_NONE;
-        } else {
-            if (focused->window != NULL &&
-                focused->window->needs_take_focus &&
-                focused->window->doesnt_accept_focus) {
-                DLOG("Updating focus by sending WM_TAKE_FOCUS to window 0x%08x (focused: %p / %s)\n",
-                     to_focus, focused, focused->name);
-                send_take_focus(to_focus, last_timestamp);
-
-                change_ewmh_focus((con_has_managed_window(focused) ? focused->window->id : XCB_WINDOW_NONE), last_focused);
-
-                if (to_focus != last_focused && is_con_attached(focused)) {
-                    ipc_send_window_event("focus", focused);
-                }
-            } else {
-                DLOG("Updating focus (focused: %p / %s) to X11 window 0x%08x\n", focused, focused->name, to_focus);
-                /* We remove XCB_EVENT_MASK_FOCUS_CHANGE from the event mask to get
-                 * no focus change events for our own focus changes. We only want
-                 * these generated by the clients. */
-                if (focused->window != NULL) {
-                    values[0] = CHILD_EVENT_MASK & ~(XCB_EVENT_MASK_FOCUS_CHANGE);
-                    xcb_change_window_attributes(conn, focused->window->id, XCB_CW_EVENT_MASK, values);
-                }
-                xcb_set_input_focus(conn, XCB_INPUT_FOCUS_POINTER_ROOT, to_focus, last_timestamp);
-                if (focused->window != NULL) {
-                    values[0] = CHILD_EVENT_MASK;
-                    xcb_change_window_attributes(conn, focused->window->id, XCB_CW_EVENT_MASK, values);
-                }
-
-                change_ewmh_focus((con_has_managed_window(focused) ? focused->window->id : XCB_WINDOW_NONE), last_focused);
-
-                if (to_focus != XCB_NONE && to_focus != last_focused && focused->window != NULL && is_con_attached(focused)) {
-                    ipc_send_window_event("focus", focused);
-                }
-            }
-
-            focused_id = last_focused = to_focus;
-        }
-    }
-
-    if (focused_id == XCB_NONE) {
-        /* If we still have no window to focus, we focus the EWMH window instead. We use this rather than the
-         * root window in order to avoid an X11 fallback mechanism causing a ghosting effect (see #1378). */
-        DLOG("Still no window focused, better set focus to the EWMH support window (%d)\n", ewmh_window);
-        xcb_set_input_focus(conn, XCB_INPUT_FOCUS_POINTER_ROOT, ewmh_window, last_timestamp);
-        change_ewmh_focus(XCB_WINDOW_NONE, last_focused);
-
-        focused_id = ewmh_window;
-        last_focused = XCB_NONE;
-    }
+    focused = current_seat->focused;
+    focused_id = current_seat->focused_id;
 
     xcb_flush(conn);
     DLOG("ENDING CHANGES\n");
@@ -1558,7 +1642,7 @@ void x_set_i3_atoms(void) {
  */
 void x_set_warp_to(Rect *rect) {
     if (config.mouse_warping != POINTER_WARPING_NONE) {
-        warp_to = rect;
+        current_seat->warp_to = rect;
     }
 }
 

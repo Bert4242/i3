@@ -33,6 +33,34 @@ void seat_init(void) {
     current_seat = last_active_seat = default_seat;
 }
 
+void seat_store_current(void) {
+    current_seat->focused = focused;
+    current_seat->focused_id = focused_id;
+}
+
+void seat_make_current(Seat *seat) {
+    if (seat == current_seat) {
+        return;
+    }
+    seat_store_current();
+    DLOG("current seat: \"%s\" -> \"%s\"\n", current_seat->name, seat->name);
+    current_seat = seat;
+    if (seat->focused == NULL) {
+        seat->focused = focused;
+    }
+    focused = seat->focused;
+    focused_id = seat->focused_id;
+}
+
+void seat_make_active(Seat *seat) {
+    seat_make_current(seat);
+    /* An inactive seat cannot focus anything, so commands must never run as
+     * it just because it produced the most recent input. */
+    if (!seat_is_inactive(seat)) {
+        last_active_seat = seat;
+    }
+}
+
 static Seat *seat_by_name_in(struct seats_head *list, const char *name) {
     Seat *seat;
     TAILQ_FOREACH (seat, list, seats) {
@@ -337,4 +365,148 @@ bool seat_may_focus(Seat *seat, Con *con) {
         return false;
     }
     return seat_owns_output(seat, con_get_output(con));
+}
+
+/*
+ * Returns the container which currently has the focus on the visible
+ * workspace of the given output, or NULL if the output has no workspace.
+ *
+ */
+static Con *seat_visible_focus_on_output(Con *output) {
+    Con *ws = con_get_fullscreen_con(output, CF_OUTPUT);
+    if (ws == NULL) {
+        ws = TAILQ_FIRST(&(output_get_content(output)->focus_head));
+    }
+    if (ws == NULL) {
+        return NULL;
+    }
+    return con_descend_focused(ws);
+}
+
+static Con *seat_first_owned_output(Seat *seat) {
+    Con *output;
+    TAILQ_FOREACH (output, &(croot->nodes_head), nodes) {
+        if (con_is_internal(output)) {
+            continue;
+        }
+        if (seat_owns_output(seat, output)) {
+            return output;
+        }
+    }
+    return NULL;
+}
+
+void seat_repair_focus(Seat *seat) {
+    if (seat->focused == NULL) {
+        seat->focused = (default_seat->focused != NULL ? default_seat->focused : focused);
+        seat->focused_id = XCB_NONE;
+    }
+    Con *f = seat->focused;
+    if (f == NULL) {
+        return;
+    }
+
+    Con *ws = con_get_workspace(f);
+    if (ws == NULL) {
+        /* Root or output level, nothing to check. */
+        return;
+    }
+    Con *output = con_get_output(f);
+
+    Con *next = NULL;
+    if (seat->output_mode == SEAT_OUTPUTS_NAMED && !seat_owns_output(seat, output)) {
+        Con *owned = seat_first_owned_output(seat);
+        if (owned != NULL) {
+            next = seat_visible_focus_on_output(owned);
+        }
+    } else if (!workspace_is_visible(ws)) {
+        /* A window moved to the scratchpad lives on the internal output;
+         * follow whoever moved it instead. */
+        next = con_is_internal(output) ? focused : seat_visible_focus_on_output(output);
+    }
+
+    if (next != NULL && next != f) {
+        DLOG("seat \"%s\": focus %p / %s is not usable anymore, re-pointing to %p / %s\n",
+             seat->name, f, f->name, next, next->name);
+        seat->focused = next;
+        seat->focused_id = XCB_NONE;
+    }
+}
+
+void seat_con_closing(Con *con) {
+    seat_store_current();
+    Seat *seat;
+    TAILQ_FOREACH (seat, &seats, seats) {
+        if (seat == current_seat || seat->focused == NULL) {
+            continue;
+        }
+        if (seat->focused != con && !con_has_parent(seat->focused, con)) {
+            continue;
+        }
+        /* con_next_focused() looks at the focus from the perspective of the
+         * global `focused`; make that this seat's for the duration. */
+        Con *saved = focused;
+        focused = seat->focused;
+        Con *next = con_next_focused(con);
+        focused = saved;
+        DLOG("seat \"%s\": focused con %p is closing, next = %p\n", seat->name, con, next);
+        seat->focused = next;
+        seat->focused_id = XCB_NONE;
+    }
+}
+
+void seat_workspace_hidden(Con *old_ws, Con *next) {
+    if (old_ws == NULL) {
+        return;
+    }
+    seat_store_current();
+    Seat *seat;
+    TAILQ_FOREACH (seat, &seats, seats) {
+        if (seat == current_seat || seat->focused == NULL) {
+            continue;
+        }
+        if (con_get_workspace(seat->focused) != old_ws) {
+            continue;
+        }
+        DLOG("seat \"%s\": workspace %s got hidden, following to %p / %s\n",
+             seat->name, old_ws->name, next, next->name);
+        seat->focused = next;
+        seat->focused_id = XCB_NONE;
+    }
+}
+
+bool seat_focuses_con(Con *con) {
+    seat_store_current();
+    Seat *seat;
+    TAILQ_FOREACH (seat, &seats, seats) {
+        if (seat_is_inactive(seat) || seat->focused == NULL) {
+            continue;
+        }
+        if (seat->focused == con || con_has_parent(con, seat->focused)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+Seat *seat_with_keyboard_focus(xcb_window_t window) {
+    if (!xinput_supported) {
+        return current_seat;
+    }
+    Seat *seat;
+    TAILQ_FOREACH (seat, &seats, seats) {
+        struct seat_input *input;
+        TAILQ_FOREACH (input, &(seat->inputs), inputs) {
+            if (input->keyboard == SEAT_DEVICE_NONE) {
+                continue;
+            }
+            xcb_input_xi_get_focus_reply_t *reply = xcb_input_xi_get_focus_reply(conn, xcb_input_xi_get_focus(conn, input->keyboard), NULL);
+            const bool matches = (reply != NULL && reply->focus == window);
+            free(reply);
+            if (matches) {
+                return seat;
+            }
+        }
+    }
+    return NULL;
 }

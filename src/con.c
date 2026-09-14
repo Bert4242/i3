@@ -300,6 +300,11 @@ void con_activate(Con *con) {
  *
  */
 void con_activate_unblock(Con *con) {
+    if (!seat_may_focus(current_seat, con)) {
+        DLOG("seat \"%s\" may not focus con %p, not focusing\n", current_seat->name, con);
+        return;
+    }
+
     Con *ws = con_get_workspace(con);
     Con *previous_focus = focused;
     Con *fullscreen_on_ws = con_get_fullscreen_covering_ws(ws);

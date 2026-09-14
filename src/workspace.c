@@ -443,6 +443,11 @@ void workspace_show(Con *workspace) {
         return;
     }
 
+    if (!seat_may_focus(current_seat, workspace)) {
+        DLOG("seat \"%s\" may not switch to workspace %s, not switching\n", current_seat->name, workspace->name);
+        return;
+    }
+
     /* disable fullscreen for the other workspaces and get the workspace we are
      * currently on. */
     TAILQ_FOREACH (current, &(workspace->parent->nodes_head), nodes) {
@@ -517,6 +522,10 @@ void workspace_show(Con *workspace) {
         }
     } else {
         con_focus(next);
+    }
+    /* `old` is the workspace itself when it was already visible on its output. */
+    if (old != workspace) {
+        seat_workspace_hidden(old, next);
     }
 
     ipc_send_workspace_event("focus", workspace, current);
