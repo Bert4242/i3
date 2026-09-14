@@ -13,10 +13,12 @@
 
 /**
  * There was a key press. We compare this key code with our bindings table and pass
- * the bound action to parse_command().
+ * the bound action to parse_command(). deviceid is the XInput2 master keyboard
+ * which pressed the key (the binding runs as its seat), or
+ * XCB_INPUT_DEVICE_ALL_MASTER for core-protocol events.
  *
  */
-void handle_key_press(xcb_key_press_event_t *event);
+void handle_key_press(xcb_key_press_event_t *event, xcb_input_device_id_t deviceid);
 
 /**
  * Kills the commanderror i3-nagbar process, if any.

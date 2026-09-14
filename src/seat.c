@@ -254,6 +254,40 @@ static char *seat_input_pointer_name(const char *input) {
     return name;
 }
 
+/*
+ * XKB state is per keyboard: select state notifications for the seat's
+ * master keyboard (main.c only does this for the core keyboard), ask for
+ * the same per-client flags (XKB state in grabbed key events, detectable
+ * autorepeat) and read its current group.
+ *
+ */
+static void seat_init_keyboard(Seat *seat, xcb_input_device_id_t keyboard) {
+    if (!xkb_supported) {
+        return;
+    }
+
+    xcb_xkb_select_events(conn,
+                          keyboard,
+                          XCB_XKB_EVENT_TYPE_STATE_NOTIFY,
+                          0,
+                          XCB_XKB_EVENT_TYPE_STATE_NOTIFY,
+                          0xff,
+                          0xff,
+                          NULL);
+
+    const uint32_t mask = XCB_XKB_PER_CLIENT_FLAG_GRABS_USE_XKB_STATE |
+                          XCB_XKB_PER_CLIENT_FLAG_LOOKUP_STATE_WHEN_GRABBED |
+                          XCB_XKB_PER_CLIENT_FLAG_DETECTABLE_AUTO_REPEAT;
+    xcb_xkb_per_client_flags_cookie_t cookie = xcb_xkb_per_client_flags(conn, keyboard, mask, mask, 0, 0, 0);
+    xcb_discard_reply(conn, cookie.sequence);
+
+    xcb_xkb_get_state_reply_t *state = xcb_xkb_get_state_reply(conn, xcb_xkb_get_state(conn, keyboard), NULL);
+    if (state != NULL) {
+        seat->xkb_group = state->group;
+        free(state);
+    }
+}
+
 void seat_resolve_devices(void) {
     Seat *seat;
     struct seat_input *input;
@@ -298,6 +332,7 @@ void seat_resolve_devices(void) {
                 input->keyboard = info->attachment;
                 DLOG("seat \"%s\" input \"%s\" resolved to XInput2 pointer %d / keyboard %d\n",
                      seat->name, input->name, input->pointer, input->keyboard);
+                seat_init_keyboard(seat, input->keyboard);
             }
         }
     }
@@ -320,6 +355,11 @@ Seat *seat_for_device(xcb_input_device_id_t deviceid) {
         }
     }
     return default_seat;
+}
+
+Seat *seat_for_keyboard(xcb_input_device_id_t deviceid) {
+    Seat *seat = seat_for_device(deviceid);
+    return seat_is_inactive(seat) ? default_seat : seat;
 }
 
 xcb_input_device_id_t seat_keyboard_for_pointer(xcb_input_device_id_t pointer) {

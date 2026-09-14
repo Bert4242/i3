@@ -110,12 +110,12 @@ Binding *configure_binding(const char *bindtype, const char *modifiers, const ch
     return new_binding;
 }
 
-static bool binding_in_current_group(const Binding *bind) {
+static bool binding_in_group(const Binding *bind, int group) {
     /* If no bits are set, the binding should be installed in every group. */
     if ((bind->event_state_mask >> 16) == I3_XKB_GROUP_MASK_ANY) {
         return true;
     }
-    switch (xkb_current_group) {
+    switch (group) {
         case XCB_XKB_GROUP_1:
             return ((bind->event_state_mask >> 16) & I3_XKB_GROUP_MASK_1);
         case XCB_XKB_GROUP_2:
@@ -125,56 +125,89 @@ static bool binding_in_current_group(const Binding *bind) {
         case XCB_XKB_GROUP_4:
             return ((bind->event_state_mask >> 16) & I3_XKB_GROUP_MASK_4);
         default:
-            ELOG("BUG: xkb_current_group (= %d) outside of [XCB_XKB_GROUP_1..XCB_XKB_GROUP_4]\n", xkb_current_group);
+            ELOG("BUG: xkb group (= %d) outside of [XCB_XKB_GROUP_1..XCB_XKB_GROUP_4]\n", group);
             return false;
     }
 }
 
-static void grab_keycode_for_binding(xcb_connection_t *conn, Binding *bind, uint32_t keycode) {
-    /* Grab the key in all combinations */
-#define GRAB_KEY(modifier)                                                                        \
-    do {                                                                                          \
-        xcb_grab_key(conn, 0, root, modifier, keycode, XCB_GRAB_MODE_ASYNC, XCB_GRAB_MODE_ASYNC); \
-    } while (0)
-    const int mods = (bind->event_state_mask & 0xFFFF);
-    DLOG("Binding %p Grabbing keycode %d with event state mask 0x%x (mods 0x%x)\n",
-         bind, keycode, bind->event_state_mask, mods);
-    GRAB_KEY(mods);
-    /* Also bind the key with active NumLock */
-    GRAB_KEY(mods | xcb_numlock_mask);
-    /* Also bind the key with active CapsLock */
-    GRAB_KEY(mods | XCB_MOD_MASK_LOCK);
-    /* Also bind the key with active NumLock+CapsLock */
-    GRAB_KEY(mods | xcb_numlock_mask | XCB_MOD_MASK_LOCK);
-}
-
 /*
- * Grab the bound keys (tell X to send us keypress events for those keycodes)
+ * Grabs a keycode with the given modifier combinations, either for the given
+ * master keyboard via XInput2 (so that the key event carries a device id) or
+ * for the core keyboard.
  *
  */
-void grab_all_keys(xcb_connection_t *conn) {
+static void grab_key(xcb_connection_t *conn, xcb_input_device_id_t deviceid, uint32_t keycode, const uint32_t *modifiers, uint16_t num_modifiers) {
+    if (xinput_supported) {
+        xinput_grab_key(conn, deviceid, keycode, modifiers, num_modifiers);
+        return;
+    }
+    for (uint16_t i = 0; i < num_modifiers; i++) {
+        xcb_grab_key(conn, 0, root, modifiers[i], keycode, XCB_GRAB_MODE_ASYNC, XCB_GRAB_MODE_ASYNC);
+    }
+}
+
+static void grab_keycode_for_binding(xcb_connection_t *conn, xcb_input_device_id_t deviceid, Binding *bind, uint32_t keycode) {
+    const uint32_t mods = (bind->event_state_mask & 0xFFFF);
+    DLOG("Binding %p Grabbing keycode %d with event state mask 0x%x (mods 0x%x)\n",
+         bind, keycode, bind->event_state_mask, mods);
+    /* Grab the key in all combinations: plain, with active NumLock, with
+     * active CapsLock, and with both. */
+    const uint32_t modifiers[] = {
+        mods,
+        mods | xcb_numlock_mask,
+        mods | XCB_MOD_MASK_LOCK,
+        mods | xcb_numlock_mask | XCB_MOD_MASK_LOCK,
+    };
+    grab_key(conn, deviceid, keycode, modifiers, 4);
+}
+
+static void grab_all_keys_for_device(xcb_connection_t *conn, xcb_input_device_id_t deviceid, int group) {
     Binding *bind;
     TAILQ_FOREACH (bind, bindings, bindings) {
         if (bind->input_type != B_KEYBOARD) {
             continue;
         }
 
-        if (!binding_in_current_group(bind)) {
+        if (!binding_in_group(bind, group)) {
             continue;
         }
 
         /* The easy case: the user specified a keycode directly. */
         if (bind->keycode > 0) {
-            grab_keycode_for_binding(conn, bind, bind->keycode);
+            grab_keycode_for_binding(conn, deviceid, bind, bind->keycode);
             continue;
         }
 
         struct Binding_Keycode *binding_keycode;
         TAILQ_FOREACH (binding_keycode, &(bind->keycodes_head), keycodes) {
-            const int keycode = binding_keycode->keycode;
-            const int mods = (binding_keycode->modifiers & 0xFFFF);
+            const uint32_t keycode = binding_keycode->keycode;
+            const uint32_t mods = (binding_keycode->modifiers & 0xFFFF);
             DLOG("Binding %p Grabbing keycode %d with mods %d\n", bind, keycode, mods);
-            xcb_grab_key(conn, 0, root, mods, keycode, XCB_GRAB_MODE_ASYNC, XCB_GRAB_MODE_ASYNC);
+            grab_key(conn, deviceid, keycode, &mods, 1);
+        }
+    }
+}
+
+/*
+ * Grab the bound keys (tell X to send us keypress events for those keycodes).
+ * With XInput2, every seat's master keyboards are grabbed separately, each
+ * for the bindings of that seat's current XKB group.
+ *
+ */
+void grab_all_keys(xcb_connection_t *conn) {
+    if (!xinput_supported) {
+        grab_all_keys_for_device(conn, XCB_INPUT_DEVICE_ALL_MASTER, xkb_current_group);
+        return;
+    }
+
+    Seat *seat;
+    TAILQ_FOREACH (seat, &seats, seats) {
+        struct seat_input *input;
+        TAILQ_FOREACH (input, &(seat->inputs), inputs) {
+            if (input->keyboard == SEAT_DEVICE_NONE) {
+                continue;
+            }
+            grab_all_keys_for_device(conn, input->keyboard, seat->xkb_group);
         }
     }
 }

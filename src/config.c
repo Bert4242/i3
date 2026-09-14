@@ -26,6 +26,10 @@ struct includedfiles_head included_files = TAILQ_HEAD_INITIALIZER(included_files
  */
 void ungrab_all_keys(xcb_connection_t *conn) {
     DLOG("Ungrabbing all keys\n");
+    if (xinput_supported) {
+        xinput_ungrab_all_keys(conn);
+        return;
+    }
     xcb_ungrab_key(conn, XCB_GRAB_ANY, root, XCB_BUTTON_MASK_ANY);
 }
 

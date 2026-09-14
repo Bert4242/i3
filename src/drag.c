@@ -23,6 +23,10 @@ struct drag_x11_cb {
     /* The original event that initiated the drag. */
     const xcb_button_press_event_t *event;
 
+    /* The seat which is dragging. Events from other seats handled while the
+     * drag loop runs switch the current seat, so it is restored after each. */
+    Seat *seat;
+
     /* The dimensions of con when the loop was started. */
     Rect old_rect;
 
@@ -93,6 +97,12 @@ static bool drain_drag_events(EV_P, struct drag_x11_cb *dragloop) {
                 } else if (generic->event_type == XCB_INPUT_MOTION) {
                     FREE(last_motion_notify);
                     last_motion_notify = xinput_translate_motion_event((xcb_input_button_press_event_t *)event);
+                } else if (generic->event_type == XCB_INPUT_KEY_PRESS) {
+                    DLOG("A key was pressed during drag, reverting changes.\n");
+                    dragloop->result = DRAG_REVERT;
+                    handle_event(type, event);
+                } else {
+                    handle_event(type, event);
                 }
                 free(event);
                 free_original_event = false;
@@ -144,6 +154,8 @@ static bool drain_drag_events(EV_P, struct drag_x11_cb *dragloop) {
         if (free_original_event && last_motion_notify != (xcb_motion_notify_event_t *)event) {
             free(event);
         }
+
+        seat_make_current(dragloop->seat);
 
         if (dragloop->result != DRAGGING) {
             ev_break(EV_A_ EVBREAK_ONE);
@@ -281,35 +293,60 @@ drag_result_t drag_pointer(Con *con, const xcb_button_press_event_t *event,
         free(reply);
     }
 
-    /* Grab the keyboard */
-    xcb_grab_keyboard_reply_t *keyb_reply;
-
-    xcb_grab_keyboard_cookie_t keyb_cookie = xcb_grab_keyboard(conn,
-                                                               false, /* get all keyboard events */
-                                                               root,  /* grab the root window */
-                                                               XCB_CURRENT_TIME,
-                                                               XCB_GRAB_MODE_ASYNC, /* continue processing pointer events as normal */
-                                                               XCB_GRAB_MODE_ASYNC  /* keyboard mode */
-    );
-
-    if ((keyb_reply = xcb_grab_keyboard_reply(conn, keyb_cookie, &error)) == NULL) {
-        ELOG("Could not grab keyboard (error_code = %d)\n", error->error_code);
-        free(error);
-        if (xinput_supported) {
-            xcb_input_xi_ungrab_device(conn, XCB_CURRENT_TIME, xinput_last_event_device);
-        } else {
-            xcb_ungrab_pointer(conn, XCB_CURRENT_TIME);
+    /* Grab the keyboard: the one paired with the dragging pointer when it is
+     * known, so that another seat keeps typing (a core xcb_grab_keyboard()
+     * would freeze i3's ClientPointer keyboard, i.e. the core keyboard,
+     * regardless of which seat drags). */
+    const xcb_input_device_id_t drag_keyboard =
+        xinput_supported ? seat_keyboard_for_pointer(xinput_last_event_device) : SEAT_DEVICE_NONE;
+    if (drag_keyboard != SEAT_DEVICE_NONE) {
+        const uint32_t mask[] = {XCB_INPUT_XI_EVENT_MASK_KEY_PRESS};
+        xcb_input_xi_grab_device_cookie_t cookie = xcb_input_xi_grab_device(
+            conn, root, XCB_CURRENT_TIME, XCB_NONE, drag_keyboard,
+            XCB_INPUT_GRAB_MODE_22_ASYNC, XCB_INPUT_GRAB_MODE_22_ASYNC, 0, 1, mask);
+        xcb_input_xi_grab_device_reply_t *reply = xcb_input_xi_grab_device_reply(conn, cookie, &error);
+        const uint8_t status = (reply != NULL) ? reply->status : 1;
+        if (reply == NULL) {
+            ELOG("Could not grab keyboard %d via XInput2 (error_code = %d)\n", drag_keyboard, error->error_code);
+            free(error);
         }
-        return DRAG_ABORT;
-    }
+        free(reply);
+        if (status != 0) {
+            ELOG("Could not grab keyboard %d via XInput2 (status = %d)\n", drag_keyboard, status);
+            xcb_input_xi_ungrab_device(conn, XCB_CURRENT_TIME, xinput_last_event_device);
+            return DRAG_ABORT;
+        }
+    } else {
+        xcb_grab_keyboard_reply_t *keyb_reply;
 
-    free(keyb_reply);
+        xcb_grab_keyboard_cookie_t keyb_cookie = xcb_grab_keyboard(conn,
+                                                                   false, /* get all keyboard events */
+                                                                   root,  /* grab the root window */
+                                                                   XCB_CURRENT_TIME,
+                                                                   XCB_GRAB_MODE_ASYNC, /* continue processing pointer events as normal */
+                                                                   XCB_GRAB_MODE_ASYNC  /* keyboard mode */
+        );
+
+        if ((keyb_reply = xcb_grab_keyboard_reply(conn, keyb_cookie, &error)) == NULL) {
+            ELOG("Could not grab keyboard (error_code = %d)\n", error->error_code);
+            free(error);
+            if (xinput_supported) {
+                xcb_input_xi_ungrab_device(conn, XCB_CURRENT_TIME, xinput_last_event_device);
+            } else {
+                xcb_ungrab_pointer(conn, XCB_CURRENT_TIME);
+            }
+            return DRAG_ABORT;
+        }
+
+        free(keyb_reply);
+    }
 
     /* Go into our own event loop */
     struct drag_x11_cb loop = {
         .result = DRAGGING,
         .con = con,
         .event = event,
+        .seat = current_seat,
         .callback = callback,
         .threshold_exceeded = !use_threshold,
         .xcursor = xcursor,
@@ -329,7 +366,11 @@ drag_result_t drag_pointer(Con *con, const xcb_button_press_event_t *event,
     ev_prepare_stop(main_loop, prepare);
     main_set_x11_cb(true);
 
-    xcb_ungrab_keyboard(conn, XCB_CURRENT_TIME);
+    if (drag_keyboard != SEAT_DEVICE_NONE) {
+        xcb_input_xi_ungrab_device(conn, XCB_CURRENT_TIME, drag_keyboard);
+    } else {
+        xcb_ungrab_keyboard(conn, XCB_CURRENT_TIME);
+    }
     if (xinput_supported) {
         xcb_input_xi_ungrab_device(conn, XCB_CURRENT_TIME, xinput_last_event_device);
     } else {

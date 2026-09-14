@@ -92,3 +92,19 @@ void xinput_ungrab_buttons(xcb_connection_t *conn, xcb_window_t window);
  *
  */
 void xinput_select_button_events(xcb_connection_t *conn, xcb_window_t window);
+
+/**
+ * Installs an XInput2 passive keycode grab on the root window for the given
+ * master keyboard, for every modifier combination in `modifiers`. The
+ * replacement for xcb_grab_key() (see grab_all_keys()) which lets key
+ * events carry a device id, so that a binding runs as the seat which
+ * pressed it.
+ *
+ */
+void xinput_grab_key(xcb_connection_t *conn, xcb_input_device_id_t deviceid, uint32_t keycode, const uint32_t *modifiers, uint16_t num_modifiers);
+
+/**
+ * Releases every keycode grab installed via xinput_grab_key().
+ *
+ */
+void xinput_ungrab_all_keys(xcb_connection_t *conn);

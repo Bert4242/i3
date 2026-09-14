@@ -199,6 +199,13 @@ void seat_resolve_devices(void);
 Seat *seat_for_device(xcb_input_device_id_t deviceid);
 
 /**
+ * Like seat_for_device(), for key events: the keyboards of an inactive seat
+ * act as the default seat's (their focus follows it, see x_push_changes()).
+ *
+ */
+Seat *seat_for_keyboard(xcb_input_device_id_t deviceid);
+
+/**
  * Returns the master keyboard paired with the given master pointer, or
  * SEAT_DEVICE_NONE if the pointer is not known.
  *

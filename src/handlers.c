@@ -1473,10 +1473,24 @@ void handle_event(int type, xcb_generic_event_t *event) {
             }
         } else if (state->xkbType == XCB_XKB_STATE_NOTIFY) {
             DLOG("xkb state group = %d\n", state->group);
-            if (xkb_current_group == state->group) {
-                return;
+            if (xinput_supported) {
+                /* Every seat's master keyboards have their own XKB state
+                 * (selected in seat_resolve_devices()). */
+                Seat *seat = seat_for_device(state->deviceID);
+                DLOG("xkb state notify for device %d, seat \"%s\"\n", state->deviceID, seat->name);
+                if (seat->xkb_group == state->group) {
+                    return;
+                }
+                seat->xkb_group = state->group;
+                if (seat == default_seat) {
+                    xkb_current_group = state->group;
+                }
+            } else {
+                if (xkb_current_group == state->group) {
+                    return;
+                }
+                xkb_current_group = state->group;
             }
-            xkb_current_group = state->group;
             ungrab_all_keys(conn);
             grab_all_keys(conn);
         }
@@ -1516,7 +1530,8 @@ void handle_event(int type, xcb_generic_event_t *event) {
     switch (type) {
         case XCB_KEY_PRESS:
         case XCB_KEY_RELEASE:
-            handle_key_press((xcb_key_press_event_t *)event);
+            /* Core-protocol fallback, see the XCB_BUTTON_PRESS case below. */
+            handle_key_press((xcb_key_press_event_t *)event, XCB_INPUT_DEVICE_ALL_MASTER);
             break;
 
         case XCB_BUTTON_PRESS:

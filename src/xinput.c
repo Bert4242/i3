@@ -35,6 +35,37 @@ xcb_input_device_id_t xinput_last_event_device = XCB_INPUT_DEVICE_ALL_MASTER;
  * protocol). */
 uint32_t xinput_core_button_fallback_mask = XCB_EVENT_MASK_BUTTON_PRESS | XCB_EVENT_MASK_BUTTON_RELEASE;
 
+/* Master keyboards which currently hold XInput2 keycode grabs, so that
+ * xinput_ungrab_all_keys() ungrabs exactly those (a device which has since
+ * been removed took its grabs with it and must be skipped). */
+static xcb_input_device_id_t *grabbed_keyboards = NULL;
+static size_t num_grabbed_keyboards = 0;
+
+/*
+ * Converts an XInput2 key press/release event into the shape of the core
+ * xcb_key_press_event_t that handle_key_press() and the binding matching
+ * in bindings.c consume. The XKB group is folded into bits 13-14 of the
+ * state, which is where the core protocol puts it for us (see the
+ * XCB_XKB_PER_CLIENT_FLAG_GRABS_USE_XKB_STATE setup in main.c).
+ *
+ */
+static void xinput_translate_key_event(const xcb_input_key_press_event_t *xi_event, xcb_key_press_event_t *event) {
+    memset(event, '\0', sizeof(xcb_key_press_event_t));
+    event->response_type = (xi_event->event_type == XCB_INPUT_KEY_PRESS) ? XCB_KEY_PRESS : XCB_KEY_RELEASE;
+    event->detail = (xcb_keycode_t)xi_event->detail;
+    event->sequence = xi_event->sequence;
+    event->time = xi_event->time;
+    event->root = xi_event->root;
+    event->event = xi_event->event;
+    event->child = xi_event->child;
+    event->root_x = (int16_t)(xi_event->root_x >> 16);
+    event->root_y = (int16_t)(xi_event->root_y >> 16);
+    event->event_x = (int16_t)(xi_event->event_x >> 16);
+    event->event_y = (int16_t)(xi_event->event_y >> 16);
+    event->state = (uint16_t)((xi_event->mods.effective & 0x1FFF) | ((xi_event->group.effective & 0x3) << 13));
+    event->same_screen = true;
+}
+
 /*
  * Converts an XInput2 button press/release event (Fp1616 coordinates, a
  * modifier-state struct) into the shape of the core xcb_button_press_event_t
@@ -185,6 +216,71 @@ void xinput_ungrab_buttons(xcb_connection_t *conn, xcb_window_t window) {
         modifiers);
 }
 
+void xinput_grab_key(xcb_connection_t *conn, xcb_input_device_id_t deviceid, uint32_t keycode, const uint32_t *modifiers, uint16_t num_modifiers) {
+    const uint32_t mask[] = {XCB_INPUT_XI_EVENT_MASK_KEY_PRESS | XCB_INPUT_XI_EVENT_MASK_KEY_RELEASE};
+    xcb_input_xi_passive_grab_device_cookie_t cookie = xcb_input_xi_passive_grab_device(
+        conn,
+        XCB_CURRENT_TIME,
+        root,
+        XCB_NONE, /* cursor */
+        keycode,
+        deviceid,
+        num_modifiers,
+        1, /* mask_len, in 4-byte units */
+        XCB_INPUT_GRAB_TYPE_KEYCODE,
+        XCB_INPUT_GRAB_MODE_22_ASYNC,
+        XCB_INPUT_GRAB_MODE_22_ASYNC,
+        0, /* owner_events */
+        mask,
+        modifiers);
+    xcb_discard_reply(conn, cookie.sequence);
+
+    for (size_t i = 0; i < num_grabbed_keyboards; i++) {
+        if (grabbed_keyboards[i] == deviceid) {
+            return;
+        }
+    }
+    grabbed_keyboards = srealloc(grabbed_keyboards, (num_grabbed_keyboards + 1) * sizeof(xcb_input_device_id_t));
+    grabbed_keyboards[num_grabbed_keyboards++] = deviceid;
+}
+
+void xinput_ungrab_all_keys(xcb_connection_t *conn) {
+    const uint32_t modifiers[] = {XCB_INPUT_MODIFIER_MASK_ANY};
+    for (size_t i = 0; i < num_grabbed_keyboards; i++) {
+        xcb_input_xi_passive_ungrab_device(
+            conn,
+            root,
+            0, /* detail: any keycode */
+            grabbed_keyboards[i],
+            1, /* num_modifiers */
+            XCB_INPUT_GRAB_TYPE_KEYCODE,
+            modifiers);
+    }
+    FREE(grabbed_keyboards);
+    num_grabbed_keyboards = 0;
+}
+
+/*
+ * Drops a master device which the server just removed from the list of
+ * grabbed keyboards: its grabs went away with it, and ungrabbing it would
+ * only produce a BadDevice error.
+ *
+ */
+static void xinput_forget_removed_devices(const xcb_input_hierarchy_event_t *event) {
+    xcb_input_hierarchy_info_iterator_t iter = xcb_input_hierarchy_infos_iterator(event);
+    for (; iter.rem > 0; xcb_input_hierarchy_info_next(&iter)) {
+        if (!(iter.data->flags & XCB_INPUT_HIERARCHY_MASK_MASTER_REMOVED)) {
+            continue;
+        }
+        for (size_t i = 0; i < num_grabbed_keyboards; i++) {
+            if (grabbed_keyboards[i] == iter.data->deviceid) {
+                grabbed_keyboards[i] = grabbed_keyboards[--num_grabbed_keyboards];
+                break;
+            }
+        }
+    }
+}
+
 void xinput_handle_event(xcb_generic_event_t *event) {
     xcb_ge_generic_event_t *generic = (xcb_ge_generic_event_t *)event;
 
@@ -199,9 +295,21 @@ void xinput_handle_event(xcb_generic_event_t *event) {
             break;
         }
 
+        case XCB_INPUT_KEY_PRESS:
+        case XCB_INPUT_KEY_RELEASE: {
+            xcb_input_key_press_event_t *xi_event = (xcb_input_key_press_event_t *)event;
+            xcb_key_press_event_t translated;
+            xinput_translate_key_event(xi_event, &translated);
+            handle_key_press(&translated, xi_event->deviceid);
+            break;
+        }
+
         case XCB_INPUT_HIERARCHY:
-            DLOG("XIHierarchyChanged event, re-resolving seat devices\n");
+            DLOG("XIHierarchyChanged event, re-resolving seat devices and re-grabbing keys\n");
+            xinput_forget_removed_devices((xcb_input_hierarchy_event_t *)event);
+            ungrab_all_keys(conn);
             seat_resolve_devices();
+            grab_all_keys(conn);
             break;
     }
 }
