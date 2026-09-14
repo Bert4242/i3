@@ -28,6 +28,15 @@ bool xinput_supported = false;
 uint8_t xinput_opcode = 0;
 xcb_input_device_id_t xinput_last_event_device = XCB_INPUT_DEVICE_ALL_MASTER;
 
+/* OR'd into FRAME_EVENT_MASK and ROOT_EVENT_MASK (see include/xcb.h). Starts
+ * out as the pre-XInput2 core button bits so that windows created before
+ * xinput_init() has run (or on a server where it turns out XInput2 isn't
+ * usable) keep receiving button press/release the old way. xinput_init()
+ * clears this to 0 once XInput2 button delivery is confirmed working, so
+ * that later window creations don't select button events twice (once per
+ * protocol). */
+uint32_t xinput_core_button_fallback_mask = XCB_EVENT_MASK_BUTTON_PRESS | XCB_EVENT_MASK_BUTTON_RELEASE;
+
 static xcb_input_device_id_t *ignored_devices = NULL;
 static size_t num_ignored_devices = 0;
 
@@ -144,16 +153,40 @@ void xinput_init(void) {
     xinput_opcode = extreply->major_opcode;
     xinput_supported = true;
 
-    /* Subscribe to XIHierarchyChanged so that a focus_ignore_pointer master
-     * which appears or disappears after startup (docking/undocking, or an
-     * autostart script creating it after i3 has already come up) is picked
-     * up without requiring an i3 restart. */
-    xcb_input_event_mask_t *mask = scalloc(1, sizeof(xcb_input_event_mask_t) + sizeof(uint32_t));
-    mask->deviceid = XCB_INPUT_DEVICE_ALL;
-    mask->mask_len = 1;
-    *((uint32_t *)(mask + 1)) = XCB_INPUT_XI_EVENT_MASK_HIERARCHY;
-    xcb_input_xi_select_events(conn, root, 1, mask);
-    free(mask);
+    /* This runs before tree_init()/manage_existing_windows(), i.e. before
+     * any client or frame window exists yet, so it's safe to clear this
+     * now: every window created from here on will select/grab button
+     * events via XInput2 instead (xinput_grab_buttons(),
+     * xinput_select_button_events(), and root below), and
+     * FRAME_EVENT_MASK/ROOT_EVENT_MASK must stop asking for core button
+     * delivery too, or every click would be delivered twice. */
+    xinput_core_button_fallback_mask = 0;
+
+    /* Select, in one request:
+     *  - XIHierarchyChanged on all devices, so that a focus_ignore_pointer
+     *    master which appears or disappears after startup (docking, or an
+     *    autostart script creating it after i3 has already come up) is
+     *    picked up without requiring an i3 restart.
+     *  - button press (not release: root has no use for it, see the
+     *    ROOT_EVENT_MASK comment in include/xcb.h) on all (current and
+     *    future) master pointers, so that clicks on the root window
+     *    (empty desktop) carry a device id too, the same as client and
+     *    frame window clicks. */
+    struct {
+        xcb_input_event_mask_t header;
+        uint32_t mask;
+    } root_masks[2] = {
+        {.header = {.deviceid = XCB_INPUT_DEVICE_ALL, .mask_len = 1}, .mask = XCB_INPUT_XI_EVENT_MASK_HIERARCHY},
+        {.header = {.deviceid = XCB_INPUT_DEVICE_ALL_MASTER, .mask_len = 1}, .mask = XCB_INPUT_XI_EVENT_MASK_BUTTON_PRESS},
+    };
+    xcb_input_xi_select_events(conn, root, 2, (xcb_input_event_mask_t *)root_masks);
+
+    /* The root window's core event mask was already set once (in main(),
+     * before this function runs) using the pre-negotiation fallback value
+     * of xinput_core_button_fallback_mask. Re-apply it now that the
+     * fallback is cleared, so root doesn't keep double-selecting button
+     * events at the core protocol level too. */
+    xcb_change_window_attributes(conn, root, XCB_CW_EVENT_MASK, (uint32_t[]){ROOT_EVENT_MASK});
 
     xinput_reresolve_ignored_pointers();
 }

@@ -1494,13 +1494,18 @@ void handle_event(int type, xcb_generic_event_t *event) {
 
         case XCB_BUTTON_PRESS:
         case XCB_BUTTON_RELEASE:
-            /* These are core-protocol button events, which after this patch
-             * only ever occur for the root window (client windows and frame
-             * decorations now deliver clicks via XInput2, see xinput.c).
+            /* Reached only when XInput2 button delivery isn't in use
+             * (xinput_core_button_fallback_mask is non-zero, see
+             * xinput.h): either XInput2 itself isn't supported by this
+             * server, or (briefly, at startup) xinput_init() hasn't run
+             * yet. Once XInput2 is confirmed working, client windows,
+             * frame decorations, and the root window all deliver button
+             * events via xinput_handle_event() above instead (see
+             * xinput.c), so this case does not fire for them anymore.
              * XCB_INPUT_DEVICE_ALL_MASTER is a reserved XInput2 device id
              * that can never match a resolved focus_ignore_pointer device,
-             * so this is a safe "not applicable" placeholder: root window
-             * clicks never reach the focus-gating logic in route_click(). */
+             * so it's a safe "not applicable" placeholder deviceid for
+             * this core-protocol fallback path. */
             handle_button_press((xcb_button_press_event_t *)event, XCB_INPUT_DEVICE_ALL_MASTER);
             break;
 

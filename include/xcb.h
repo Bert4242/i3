@@ -31,22 +31,35 @@
 
 /** The XCB_CW_EVENT_MASK for its frame.
  *
- * Button press/release are intentionally NOT part of this core protocol
- * mask: they are selected separately via XInput2 (see
- * xinput_select_button_events(), called once when the frame window is
- * created), which lets handle_button_press() know which pointer device a
- * click came from. This is what focus_ignore_pointer needs (see
- * xinput.c). Selecting them here as well would deliver every decoration
- * click twice, once via each protocol. */
-#define FRAME_EVENT_MASK (XCB_EVENT_MASK_POINTER_MOTION |        /* …mouse is moved */                         \
+ * Button press/release are handled by xinput_core_button_fallback_mask
+ * (see xinput.h), not hardcoded here: they are normally selected
+ * separately via XInput2 (see xinput_select_button_events(), called once
+ * when the frame window is created), which lets handle_button_press()
+ * know which pointer device a click came from — this is what
+ * focus_ignore_pointer needs (see xinput.c). Hardcoding them here as well
+ * would deliver every decoration click twice, once via each protocol; the
+ * fallback variable is 0 exactly when that would happen, and holds the
+ * core bits only for as long as (or if) XInput2 button delivery isn't
+ * actually in use. */
+#define FRAME_EVENT_MASK (xinput_core_button_fallback_mask |                                                   \
+                          XCB_EVENT_MASK_POINTER_MOTION |        /* …mouse is moved */                         \
                           XCB_EVENT_MASK_EXPOSURE |              /* …our window needs to be redrawn */         \
                           XCB_EVENT_MASK_STRUCTURE_NOTIFY |      /* …the frame gets destroyed */               \
                           XCB_EVENT_MASK_SUBSTRUCTURE_REDIRECT | /* …the application tries to resize itself */ \
                           XCB_EVENT_MASK_SUBSTRUCTURE_NOTIFY |   /* …subwindows get notifies */                \
                           XCB_EVENT_MASK_ENTER_WINDOW)           /* …user moves cursor inside our window */
 
-#define ROOT_EVENT_MASK (XCB_EVENT_MASK_SUBSTRUCTURE_REDIRECT |                                       \
-                         XCB_EVENT_MASK_BUTTON_PRESS |                                                \
+/** See the FRAME_EVENT_MASK comment above: xinput_core_button_fallback_mask
+ * takes the place of a hardcoded XCB_EVENT_MASK_BUTTON_PRESS here too, so
+ * that root window clicks also carry an XInput2 device id (the same as
+ * client and frame window clicks) whenever XInput2 button delivery is
+ * actually in use. Only the PRESS bit is taken from the fallback value:
+ * unlike client/frame windows, root has no button-release handling (it
+ * only cares about the initial click, to focus the right output's
+ * workspace), and never asked for release events before this feature
+ * existed either. */
+#define ROOT_EVENT_MASK ((xinput_core_button_fallback_mask & XCB_EVENT_MASK_BUTTON_PRESS) |           \
+                         XCB_EVENT_MASK_SUBSTRUCTURE_REDIRECT |                                       \
                          XCB_EVENT_MASK_STRUCTURE_NOTIFY | /* when the user adds a screen (e.g. video \
                                                             * projector), the root window gets a      \
                                                             * ConfigureNotify */                      \
