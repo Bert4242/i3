@@ -38,11 +38,20 @@ struct seat_input {
  * The tree keeps a single focus order per container, which all seats share,
  * so it cannot answer "where was *this* seat on that workspace"; this does,
  * and every seat therefore resumes where it left off, just like the only
- * seat of a single-seat i3 does. Entries are dropped when either container
- * is closed (see seat_con_closing()). */
+ * seat of a single-seat i3 does. Entries are dropped when any of the
+ * containers below is closed (see seat_con_closing()). */
 struct seat_ws_focus {
     Con *workspace;
     Con *focused;
+    /** What the workspace's own (seat-independent) focus order pointed at
+     * when this record was taken, i.e. con_descend_focused(workspace).
+     * A record only applies while that is still the answer: anything which
+     * deliberately re-orders the workspace's focus while it is hidden - a
+     * `swap`, a `move`, or con_activate_unblock() making a container the
+     * focus head before switching to its workspace - must win over where
+     * this seat happened to stand, exactly as it does on single-seat i3.
+     * Compared by identity only, never dereferenced. */
+    Con *shared;
 
     TAILQ_ENTRY(seat_ws_focus) ws_focus;
 };
@@ -300,8 +309,14 @@ void seat_remember_focus(Seat *seat);
  * workspace's regular focus target when the seat has not been there (or what
  * it focused is gone from the workspace since).
  *
+ * `shared` is the workspace's own focus target, con_descend_focused(workspace),
+ * as of *before* anything focused on the workspace for this switch. The seat's
+ * record is only honoured while the workspace's focus order still says what it
+ * said when the record was taken; otherwise `shared` wins, see
+ * struct seat_ws_focus.
+ *
  */
-Con *seat_workspace_focus_target(Seat *seat, Con *workspace);
+Con *seat_workspace_focus_target(Seat *seat, Con *workspace, Con *shared);
 
 /**
  * Called by workspace_show() once a new workspace is shown on an output:
@@ -310,8 +325,12 @@ Con *seat_workspace_focus_target(Seat *seat, Con *workspace);
  * it stood on the workspace now shown, since an unmapped window cannot hold
  * keyboard focus.
  *
+ * `shared` is the same value workspace_show() passed to
+ * seat_workspace_focus_target() for the switching seat, i.e. sampled before
+ * that seat's con_focus() re-ordered the workspace's focus.
+ *
  */
-void seat_workspace_shown(Con *old_ws, Con *workspace);
+void seat_workspace_shown(Con *old_ws, Con *workspace, Con *shared);
 
 /**
  * Returns true if any active seat focuses the container or a container

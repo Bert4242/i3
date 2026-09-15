@@ -495,7 +495,11 @@ void workspace_show(Con *workspace) {
      * dragged along because they watch the same output. */
     seat_store_current();
     seat_remember_focus(current_seat);
-    Con *next = seat_workspace_focus_target(current_seat, workspace);
+    /* Sample the workspace's own focus target before anything focuses for this
+     * switch, so that every seat is compared against the same "what the tree
+     * says" value, whichever seat drives the switch. */
+    Con *shared = con_descend_focused(workspace);
+    Con *next = seat_workspace_focus_target(current_seat, workspace, shared);
 
     /* Memorize current output */
     Con *old_output = con_get_output(focused);
@@ -532,7 +536,7 @@ void workspace_show(Con *workspace) {
     }
     /* `old` is the workspace itself when it was already visible on its output. */
     if (old != workspace) {
-        seat_workspace_shown(old, workspace);
+        seat_workspace_shown(old, workspace, shared);
     }
 
     ipc_send_workspace_event("focus", workspace, current);

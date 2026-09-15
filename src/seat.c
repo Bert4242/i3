@@ -438,7 +438,7 @@ static Con *seat_visible_focus_on_output(Seat *seat, Con *output) {
     if (ws == NULL) {
         return NULL;
     }
-    return seat_workspace_focus_target(seat, ws);
+    return seat_workspace_focus_target(seat, ws, con_descend_focused(ws));
 }
 
 static Con *seat_first_owned_output(Seat *seat) {
@@ -534,19 +534,30 @@ void seat_remember_focus(Seat *seat) {
         TAILQ_INSERT_TAIL(&(seat->ws_focus), entry, ws_focus);
     }
     entry->focused = f;
+    entry->shared = con_descend_focused(ws);
 }
 
-Con *seat_workspace_focus_target(Seat *seat, Con *workspace) {
+Con *seat_workspace_focus_target(Seat *seat, Con *workspace, Con *shared) {
     struct seat_ws_focus *entry = seat_ws_focus_for(seat, workspace);
     if (entry == NULL) {
-        return con_descend_focused(workspace);
+        return shared;
     }
     /* The container may have been moved to another workspace since, and a
      * fullscreen window covers whatever the seat stood on. */
     if (entry->focused == workspace ||
         con_get_workspace(entry->focused) != workspace ||
         con_get_fullscreen_con(workspace, CF_OUTPUT) != NULL) {
-        return con_descend_focused(workspace);
+        return shared;
+    }
+    /* Something re-ordered the workspace's focus while it was hidden - a
+     * `swap`, a `move`, or con_activate_unblock() pre-focusing the container
+     * it is about to switch to this workspace for. That is a deliberate
+     * statement about where focus belongs and outranks where this seat
+     * happened to stand, just as it does on single-seat i3. */
+    if (entry->shared != shared) {
+        DLOG("seat \"%s\": focus order of workspace %s changed while hidden, not resuming on %p\n",
+             seat->name, workspace->name, entry->focused);
+        return shared;
     }
     return entry->focused;
 }
@@ -560,8 +571,12 @@ static void seat_forget_con(Seat *seat, Con *con) {
     struct seat_ws_focus *entry, *next;
     for (entry = TAILQ_FIRST(&(seat->ws_focus)); entry != NULL; entry = next) {
         next = TAILQ_NEXT(entry, ws_focus);
-        if (entry->workspace == con || entry->focused == con ||
-            con_has_parent(entry->workspace, con) || con_has_parent(entry->focused, con)) {
+        /* `shared` is only ever compared by identity, but a freed container's
+         * address can be handed out again to a new one, which would make a
+         * stale record look current. Drop the record with it. */
+        if (entry->workspace == con || entry->focused == con || entry->shared == con ||
+            con_has_parent(entry->workspace, con) || con_has_parent(entry->focused, con) ||
+            con_has_parent(entry->shared, con)) {
             TAILQ_REMOVE(&(seat->ws_focus), entry, ws_focus);
             free(entry);
         }
@@ -591,7 +606,7 @@ void seat_con_closing(Con *con) {
     }
 }
 
-void seat_workspace_shown(Con *old_ws, Con *workspace) {
+void seat_workspace_shown(Con *old_ws, Con *workspace, Con *shared) {
     if (old_ws == NULL) {
         return;
     }
@@ -605,7 +620,7 @@ void seat_workspace_shown(Con *old_ws, Con *workspace) {
             continue;
         }
         seat_remember_focus(seat);
-        Con *next = seat_workspace_focus_target(seat, workspace);
+        Con *next = seat_workspace_focus_target(seat, workspace, shared);
         DLOG("seat \"%s\": workspace %s got hidden, resuming on %p / %s\n",
              seat->name, old_ws->name, next, next->name);
         seat->focused = next;
