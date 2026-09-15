@@ -26,8 +26,13 @@
             y(map_close);                   \
         }                                   \
     } while (0)
+/* Reports a failed command. The JSON reply is only written when there is a
+ * generator to write it to, but the failure is recorded either way: a nested
+ * parse_command() (see cmd_seat_run()) has no json_gen, and without the flag
+ * its failure would not reach the outermost reply. */
 #define yerror(format, ...)                             \
     do {                                                \
+        cmd_output->command_error = true;               \
         if (cmd_output->json_gen != NULL) {             \
             char *message;                              \
             sasprintf(&message, format, ##__VA_ARGS__); \
@@ -2591,16 +2596,6 @@ void cmd_seat_select(I3_CMD, const char *seat) {
  *
  */
 void cmd_seat_run(I3_CMD, const char *seat, const char *command) {
-    /* `seat a seat a seat a …` nests one parse_command() per `seat`, so cap
-     * how deep an IPC client can drive that. Nesting more than a couple of
-     * levels has no use: the innermost `seat` decides who runs the command. */
-    static int nesting = 0;
-    if (nesting >= 10) {
-        ELOG("Refusing to nest `seat <name> <command>` more than 10 levels deep\n");
-        yerror("`seat %s <command>` nested too deeply", seat);
-        return;
-    }
-
     Seat *target = seat_by_name(seat);
     if (target == NULL) {
         yerror("No such seat: %s", seat);
@@ -2610,15 +2605,14 @@ void cmd_seat_run(I3_CMD, const char *seat, const char *command) {
     /* The nested command may remove the seat we started from. */
     char *previous_name = sstrdup(current_seat->name);
     seat_make_current(target);
-    nesting++;
+    /* parse_command() bounds how deeply this may recurse into itself. */
     CommandResult *result = parse_command(command, NULL, cmd_output->client);
-    nesting--;
     Seat *previous = seat_by_name(previous_name);
     seat_make_current(previous != NULL ? previous : default_seat);
     free(previous_name);
 
     cmd_output->needs_tree_render |= result->needs_tree_render;
-    if (result->parse_error) {
+    if (result->parse_error || result->command_error) {
         yerror("Could not run \"%s\" as seat %s", command, seat);
     } else {
         ysuccess(true);

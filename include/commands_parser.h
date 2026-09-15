@@ -48,6 +48,12 @@ struct CommandResultIR {
 
     /* Whether the command requires calling tree_render. */
     bool needs_tree_render;
+
+    /* Whether the command failed. yerror() only writes a JSON reply, and a
+     * nested parse_command() (see cmd_seat_run()) has no json_gen to write
+     * to, so a failure down there would otherwise be lost on the way out.
+     * Merged into CommandResult.command_error like needs_tree_render is. */
+    bool command_error;
 };
 
 /* Define the owindows head structure here so it's complete */
@@ -85,6 +91,9 @@ struct CommandResult {
     /* the error_message is currently only set for parse errors */
     char *error_message;
     bool needs_tree_render;
+    /* Whether any command in the string failed at run time (as opposed to
+     * failing to parse), see CommandResultIR.command_error. */
+    bool command_error;
 };
 
 /**

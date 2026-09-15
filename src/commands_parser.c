@@ -26,6 +26,9 @@
 #include "all.h"
 #include "parser_util.h"
 
+/* How deep command strings may nest into each other, see parse_command(). */
+#define MAX_NESTED_COMMANDS 10
+
 /* Macros to make the YAJL API a bit easier to use. */
 #define y(x, ...) (cmd_ctx.command_output.json_gen != NULL ? yajl_gen_##x(cmd_ctx.command_output.json_gen, ##__VA_ARGS__) : 0)
 #define ystr(str) (cmd_ctx.command_output.json_gen != NULL ? yajl_gen_string(cmd_ctx.command_output.json_gen, (unsigned char *)str, strlen(str)) : 0)
@@ -69,12 +72,17 @@ static void next_state(const cmdp_token *token, struct cmd_parser_ctx *cmd_ctx) 
         cmd_ctx->subcommand_output.json_gen = cmd_ctx->command_output.json_gen;
         cmd_ctx->subcommand_output.client = cmd_ctx->command_output.client;
         cmd_ctx->subcommand_output.needs_tree_render = false;
+        cmd_ctx->subcommand_output.command_error = false;
         GENERATED_call(&cmd_ctx->current_match, &cmd_ctx->stack, token->extra.call_identifier, &cmd_ctx->subcommand_output);
         cmd_ctx->state = cmd_ctx->subcommand_output.next_state;
         /* If any subcommand requires a tree_render(), we need to make the
          * whole parser result request a tree_render(). */
         if (cmd_ctx->subcommand_output.needs_tree_render) {
             cmd_ctx->command_output.needs_tree_render = true;
+        }
+        /* Likewise, one failing subcommand makes the whole string fail. */
+        if (cmd_ctx->subcommand_output.command_error) {
+            cmd_ctx->command_output.command_error = true;
         }
         parser_clear_stack(&cmd_ctx->stack);
         return;
@@ -159,21 +167,6 @@ CommandResult *parse_command(const char *input, yajl_gen gen, ipc_client *client
     DLOG("COMMAND: *%.4000s*\n", input);
     struct cmd_parser_ctx cmd_ctx = {0};
 
-    /* Commands without a device behind them (IPC) run as the seat which
-     * most recently produced input; a binding's seat is already the active
-     * one. Restored on return so that a `seat <name>` command does not leak
-     * into the next command string. */
-#ifndef TEST_PARSER
-    /* Only the outermost command string starts as the last active seat:
-     * `seat <name> <command>` parses its command nested, as that seat. The
-     * previous seat is remembered by name since the command may remove it. */
-    static int parse_depth = 0;
-    char *previous_seat_name = sstrdup(current_seat->name);
-    if (parse_depth++ == 0) {
-        seat_make_current(last_active_seat);
-    }
-#endif
-
     cmd_ctx.state = INITIAL;
     CommandResult *result = scalloc(1, sizeof(CommandResult));
 
@@ -185,6 +178,46 @@ CommandResult *parse_command(const char *input, yajl_gen gen, ipc_client *client
 
     y(array_open);
     cmd_ctx.command_output.needs_tree_render = false;
+    cmd_ctx.command_output.command_error = false;
+
+    /* Commands without a device behind them (IPC) run as the seat which
+     * most recently produced input; a binding's seat is already the active
+     * one. Restored on return so that a `seat <name>` command does not leak
+     * into the next command string. */
+#ifndef TEST_PARSER
+    /* Only the outermost command string starts as the last active seat:
+     * `seat <name> <command>` parses its command nested, as that seat. The
+     * previous seat is remembered by name since the command may remove it. */
+    static int parse_depth = 0;
+    /* cmd_seat_run() runs the command of `seat <name> <command>` by calling
+     * this function again, so one command string can drive it into itself
+     * once per `seat` it contains. The string comes from an IPC client and
+     * is not length-limited, so bound the recursion here rather than in that
+     * one caller: no useful command nests anywhere near this deep, and any
+     * future nested parse is covered too. */
+    if (parse_depth >= MAX_NESTED_COMMANDS) {
+        ELOG("Refusing to nest commands more than %d levels deep: %.100s\n",
+             MAX_NESTED_COMMANDS, input);
+        result->parse_error = true;
+        result->error_message = sstrdup("Commands nested too deeply");
+        y(map_open);
+        ystr("success");
+        y(bool, false);
+        ystr("error");
+        ystr(result->error_message);
+        ystr("input");
+        ystr(input);
+        y(map_close);
+        y(array_close);
+        /* Returns before parse_depth is incremented, so there is nothing for
+         * the cleanup at the end of this function to undo. */
+        return result;
+    }
+    char *previous_seat_name = sstrdup(current_seat->name);
+    if (parse_depth++ == 0) {
+        seat_make_current(last_active_seat);
+    }
+#endif
 
     const char *walk = input;
     const size_t len = strlen(input);
@@ -373,6 +406,7 @@ CommandResult *parse_command(const char *input, yajl_gen gen, ipc_client *client
     y(array_close);
 
     result->needs_tree_render = cmd_ctx.command_output.needs_tree_render;
+    result->command_error = cmd_ctx.command_output.command_error;
     /* Clean up owindows entries */
     while (!TAILQ_EMPTY(&cmd_ctx.owindows)) {
         struct owindow *ow = TAILQ_FIRST(&cmd_ctx.owindows);

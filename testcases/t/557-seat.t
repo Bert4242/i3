@@ -144,6 +144,30 @@ $reply = cmd 'seat nonexistent remove';
 is($reply->[0]->{success}, JSON::XS::false,
    'removing an unknown seat fails');
 
+# `seat <name> <command>` parses its command by calling the command parser
+# again, so a failure has to survive the way back out through every level.
+is(cmd('seat default seat nonexistent nop x')->[0]->{success}, JSON::XS::false,
+   'a failure two levels deep is still reported');
+is(cmd('seat default seat default seat nonexistent nop x')->[0]->{success},
+   JSON::XS::false, 'a failure three levels deep is still reported');
+is(cmd('nop unaffected')->[0]->{success}, JSON::XS::true,
+   'an ordinary command still succeeds');
+
+################################################################################
+# That nesting is bounded, so a single command string cannot drive the parser
+# into itself until the stack runs out.
+################################################################################
+
+my $nested = 'nop shallow';
+$nested = "seat default $nested" for (1 .. 5);
+is(cmd($nested)->[0]->{success}, JSON::XS::true,
+   'nesting a few levels deep is allowed');
+
+$nested = 'nop too-deep';
+$nested = "seat default $nested" for (1 .. 5000);
+is(cmd($nested)->[0]->{success}, JSON::XS::false,
+   'nesting far past the limit is refused');
+
 does_i3_live;
 
 ################################################################################
