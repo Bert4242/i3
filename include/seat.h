@@ -255,9 +255,12 @@ bool seat_is_inactive(Seat *seat);
 
 /**
  * Makes sure the seat's focused container is usable: set (inheriting the
- * default seat's focus), on a visible workspace and, for a restricted seat,
- * on one of its outputs; re-points it otherwise. Call seat_store_current()
- * before and reload `focused`/`focused_id` from current_seat afterward.
+ * default seat's focus), off the internal scratchpad output and, for a
+ * restricted seat, on one of its outputs; re-points it otherwise. A seat
+ * whose workspace is simply not the one currently shown on its output keeps
+ * its own focus regardless, so it resumes there once that workspace is
+ * shown again. Call seat_store_current() before and reload
+ * `focused`/`focused_id` from current_seat afterward.
  *
  */
 void seat_repair_focus(Seat *seat);
@@ -270,12 +273,14 @@ void seat_repair_focus(Seat *seat);
 void seat_con_closing(Con *con);
 
 /**
- * Called by workspace_show() once `next` (on the newly shown workspace) is
- * focused: every other seat whose focus lived on the now hidden workspace
- * follows to `next`, since an unmapped window cannot hold keyboard focus.
+ * Called by workspace_show() once a new workspace is shown on an output:
+ * every other seat whose focus lived on the now hidden workspace (i.e. was
+ * also watching that output) gets pointed at the window under its own
+ * pointer on the new workspace, rather than wherever the requesting seat
+ * ended up.
  *
  */
-void seat_workspace_hidden(Con *old_ws, Con *next);
+void seat_workspace_shown(Con *old_ws, Con *workspace);
 
 /**
  * Returns true if any active seat focuses the container or a container
