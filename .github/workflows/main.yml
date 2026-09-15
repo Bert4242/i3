@@ -2,7 +2,7 @@ name: GitHub Actions
 
 on:
   push:
-    branches: [ next, master, actions, focus-ignore-pointer, multiseat ]
+    branches: [ next, master, actions ]
   pull_request:
     branches: [ next ]
 
