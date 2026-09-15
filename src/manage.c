@@ -226,7 +226,7 @@ void manage_window(xcb_window_t window, xcb_get_window_attributes_cookie_t cooki
     /* startup_sequence_for_window() takes ownership of startup_id_reply. */
     struct Startup_Sequence *startup_sequence = startup_sequence_for_window(cwindow, startup_id_reply);
     char *startup_ws = (startup_sequence != NULL) ? startup_sequence->workspace : NULL;
-    DLOG("startup workspace = %s\n", startup_ws);
+    DLOG("startup workspace = %s\n", startup_ws ? startup_ws : "(null)");
 
     /* A window launched by a seat is placed relative to that seat's focus,
      * not to whichever seat happened to produce the most recent input. */
