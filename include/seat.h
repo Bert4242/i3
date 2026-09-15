@@ -34,6 +34,19 @@ struct seat_input {
 
 #define SEAT_DEVICE_NONE ((xcb_input_device_id_t)0)
 
+/** Where a seat stood on a workspace when that workspace was last hidden.
+ * The tree keeps a single focus order per container, which all seats share,
+ * so it cannot answer "where was *this* seat on that workspace"; this does,
+ * and every seat therefore resumes where it left off, just like the only
+ * seat of a single-seat i3 does. Entries are dropped when either container
+ * is closed (see seat_con_closing()). */
+struct seat_ws_focus {
+    Con *workspace;
+    Con *focused;
+
+    TAILQ_ENTRY(seat_ws_focus) ws_focus;
+};
+
 typedef enum {
     /** The seat may focus containers on every output (the default). */
     SEAT_OUTPUTS_ALL = 0,
@@ -73,6 +86,9 @@ typedef struct Seat {
     /** Last X11 window we actually focused, kept separately because
      * focused_id gets reset to XCB_NONE to force a refocus. */
     xcb_window_t last_focused;
+    /** Where this seat stood on the workspaces it has visited, see
+     * struct seat_ws_focus. */
+    TAILQ_HEAD(seat_ws_focus_head, seat_ws_focus) ws_focus;
     /** Where to warp this seat's pointer in the next x_push_changes(). */
     Rect *warp_to;
     /** Current XKB group of this seat's keyboards. */
@@ -264,18 +280,38 @@ void seat_repair_focus(Seat *seat);
 
 /**
  * Called before a container is detached and freed: every other seat whose
- * focus is (inside) the container is pointed at what would be focused next.
+ * focus is (inside) the container is pointed at what would be focused next,
+ * and every seat forgets the container, see struct seat_ws_focus.
  *
  */
 void seat_con_closing(Con *con);
 
 /**
- * Called by workspace_show() once `next` (on the newly shown workspace) is
- * focused: every other seat whose focus lived on the now hidden workspace
- * follows to `next`, since an unmapped window cannot hold keyboard focus.
+ * Records where the seat currently stands, so that it resumes there when the
+ * workspace it is on is shown again. Call seat_store_current() before, for
+ * the current seat's focus to be up to date.
  *
  */
-void seat_workspace_hidden(Con *old_ws, Con *next);
+void seat_remember_focus(Seat *seat);
+
+/**
+ * Returns the container the seat should focus on `workspace` once it is
+ * shown: the one it stood on when that workspace was last hidden, or the
+ * workspace's regular focus target when the seat has not been there (or what
+ * it focused is gone from the workspace since).
+ *
+ */
+Con *seat_workspace_focus_target(Seat *seat, Con *workspace);
+
+/**
+ * Called by workspace_show() once a new workspace is shown on an output:
+ * every other seat whose focus lived on the now hidden workspace (i.e. was
+ * also watching that output) records where it stood there and resumes where
+ * it stood on the workspace now shown, since an unmapped window cannot hold
+ * keyboard focus.
+ *
+ */
+void seat_workspace_shown(Con *old_ws, Con *workspace);
 
 /**
  * Returns true if any active seat focuses the container or a container

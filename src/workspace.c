@@ -488,7 +488,14 @@ void workspace_show(Con *workspace) {
     workspace_reassign_sticky(workspace);
 
     DLOG("switching to %p / %s\n", workspace, workspace->name);
-    Con *next = con_descend_focused(workspace);
+    /* Note where this seat stands before it leaves, and resume where it stood
+     * on the workspace being shown: the focus order the tree keeps per
+     * container is shared by every seat, so it cannot say where each of them
+     * was. seat_workspace_shown() does the same for the seats which are
+     * dragged along because they watch the same output. */
+    seat_store_current();
+    seat_remember_focus(current_seat);
+    Con *next = seat_workspace_focus_target(current_seat, workspace);
 
     /* Memorize current output */
     Con *old_output = con_get_output(focused);
@@ -525,7 +532,7 @@ void workspace_show(Con *workspace) {
     }
     /* `old` is the workspace itself when it was already visible on its output. */
     if (old != workspace) {
-        seat_workspace_hidden(old, next);
+        seat_workspace_shown(old, workspace);
     }
 
     ipc_send_workspace_event("focus", workspace, current);

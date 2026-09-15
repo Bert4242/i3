@@ -79,6 +79,7 @@ Seat *seat_new(struct seats_head *list, const char *name) {
     Seat *seat = scalloc(1, sizeof(Seat));
     seat->name = sstrdup(name);
     TAILQ_INIT(&(seat->inputs));
+    TAILQ_INIT(&(seat->ws_focus));
     SLIST_INIT(&(seat->outputs));
     seat->focus_enabled = true;
     seat->clicks_confined = true;
@@ -155,6 +156,11 @@ void seat_add_output(Seat *seat, const char *name) {
 void seat_free(Seat *seat) {
     seat_clear_inputs(seat);
     seat_clear_outputs(seat);
+    while (!TAILQ_EMPTY(&(seat->ws_focus))) {
+        struct seat_ws_focus *entry = TAILQ_FIRST(&(seat->ws_focus));
+        TAILQ_REMOVE(&(seat->ws_focus), entry, ws_focus);
+        free(entry);
+    }
     FREE(seat->name);
     FREE(seat);
 }
@@ -419,11 +425,12 @@ bool seat_may_click_output(Seat *seat, Con *output_con) {
 }
 
 /*
- * Returns the container which currently has the focus on the visible
- * workspace of the given output, or NULL if the output has no workspace.
+ * Returns the container the seat should focus on the visible workspace of
+ * the given output - where it stood there, like a workspace switch does -
+ * or NULL if the output has no workspace.
  *
  */
-static Con *seat_visible_focus_on_output(Con *output) {
+static Con *seat_visible_focus_on_output(Seat *seat, Con *output) {
     Con *ws = con_get_fullscreen_con(output, CF_OUTPUT);
     if (ws == NULL) {
         ws = TAILQ_FIRST(&(output_get_content(output)->focus_head));
@@ -431,7 +438,7 @@ static Con *seat_visible_focus_on_output(Con *output) {
     if (ws == NULL) {
         return NULL;
     }
-    return con_descend_focused(ws);
+    return seat_workspace_focus_target(seat, ws);
 }
 
 static Con *seat_first_owned_output(Seat *seat) {
@@ -468,12 +475,12 @@ void seat_repair_focus(Seat *seat) {
     if (seat->output_mode == SEAT_OUTPUTS_NAMED && !seat_owns_output(seat, output)) {
         Con *owned = seat_first_owned_output(seat);
         if (owned != NULL) {
-            next = seat_visible_focus_on_output(owned);
+            next = seat_visible_focus_on_output(seat, owned);
         }
     } else if (!workspace_is_visible(ws)) {
         /* A window moved to the scratchpad lives on the internal output;
          * follow whoever moved it instead. */
-        next = con_is_internal(output) ? focused : seat_visible_focus_on_output(output);
+        next = con_is_internal(output) ? focused : seat_visible_focus_on_output(seat, output);
     }
 
     if (next != NULL && next != f) {
@@ -484,10 +491,88 @@ void seat_repair_focus(Seat *seat) {
     }
 }
 
+/*
+ * Returns the seat's record for the given workspace, or NULL when it has not
+ * been there (or the record was dropped, see seat_forget_con()).
+ *
+ */
+static struct seat_ws_focus *seat_ws_focus_for(Seat *seat, Con *workspace) {
+    struct seat_ws_focus *entry;
+    TAILQ_FOREACH (entry, &(seat->ws_focus), ws_focus) {
+        if (entry->workspace == workspace) {
+            return entry;
+        }
+    }
+    return NULL;
+}
+
+void seat_remember_focus(Seat *seat) {
+    Con *f = seat->focused;
+    if (f == NULL) {
+        return;
+    }
+    Con *ws = con_get_workspace(f);
+    /* The scratchpad is shown on top of a workspace, not instead of one. */
+    if (ws == NULL || con_is_internal(ws)) {
+        return;
+    }
+
+    struct seat_ws_focus *entry = seat_ws_focus_for(seat, ws);
+    if (f == ws) {
+        /* The seat stands on the workspace itself, i.e. on nothing: it was
+         * empty. There is no spot to come back to, and remembering one would
+         * outlive the windows opened there in the meantime. */
+        if (entry != NULL) {
+            TAILQ_REMOVE(&(seat->ws_focus), entry, ws_focus);
+            free(entry);
+        }
+        return;
+    }
+    if (entry == NULL) {
+        entry = scalloc(1, sizeof(struct seat_ws_focus));
+        entry->workspace = ws;
+        TAILQ_INSERT_TAIL(&(seat->ws_focus), entry, ws_focus);
+    }
+    entry->focused = f;
+}
+
+Con *seat_workspace_focus_target(Seat *seat, Con *workspace) {
+    struct seat_ws_focus *entry = seat_ws_focus_for(seat, workspace);
+    if (entry == NULL) {
+        return con_descend_focused(workspace);
+    }
+    /* The container may have been moved to another workspace since, and a
+     * fullscreen window covers whatever the seat stood on. */
+    if (entry->focused == workspace ||
+        con_get_workspace(entry->focused) != workspace ||
+        con_get_fullscreen_con(workspace, CF_OUTPUT) != NULL) {
+        return con_descend_focused(workspace);
+    }
+    return entry->focused;
+}
+
+/*
+ * Drops every record of the seat which mentions the container, so that no
+ * record outlives what it points at.
+ *
+ */
+static void seat_forget_con(Seat *seat, Con *con) {
+    struct seat_ws_focus *entry, *next;
+    for (entry = TAILQ_FIRST(&(seat->ws_focus)); entry != NULL; entry = next) {
+        next = TAILQ_NEXT(entry, ws_focus);
+        if (entry->workspace == con || entry->focused == con ||
+            con_has_parent(entry->workspace, con) || con_has_parent(entry->focused, con)) {
+            TAILQ_REMOVE(&(seat->ws_focus), entry, ws_focus);
+            free(entry);
+        }
+    }
+}
+
 void seat_con_closing(Con *con) {
     seat_store_current();
     Seat *seat;
     TAILQ_FOREACH (seat, &seats, seats) {
+        seat_forget_con(seat, con);
         if (seat == current_seat || seat->focused == NULL) {
             continue;
         }
@@ -506,7 +591,7 @@ void seat_con_closing(Con *con) {
     }
 }
 
-void seat_workspace_hidden(Con *old_ws, Con *next) {
+void seat_workspace_shown(Con *old_ws, Con *workspace) {
     if (old_ws == NULL) {
         return;
     }
@@ -519,7 +604,9 @@ void seat_workspace_hidden(Con *old_ws, Con *next) {
         if (con_get_workspace(seat->focused) != old_ws) {
             continue;
         }
-        DLOG("seat \"%s\": workspace %s got hidden, following to %p / %s\n",
+        seat_remember_focus(seat);
+        Con *next = seat_workspace_focus_target(seat, workspace);
+        DLOG("seat \"%s\": workspace %s got hidden, resuming on %p / %s\n",
              seat->name, old_ws->name, next, next->name);
         seat->focused = next;
         seat->focused_id = XCB_NONE;
