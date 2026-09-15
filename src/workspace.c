@@ -488,7 +488,12 @@ void workspace_show(Con *workspace) {
     workspace_reassign_sticky(workspace);
 
     DLOG("switching to %p / %s\n", workspace, workspace->name);
-    Con *next = con_descend_focused(workspace);
+    /* Focus goes where the seat stands, i.e. onto the window at the spot its
+     * currently focused window (or its pointer) occupies, not onto whatever
+     * was focused on `workspace` last: the per-workspace focus order is
+     * shared by all seats, so it cannot say where each of them resumes. */
+    seat_store_current();
+    Con *next = seat_workspace_focus_target(current_seat, workspace);
 
     /* Memorize current output */
     Con *old_output = con_get_output(focused);

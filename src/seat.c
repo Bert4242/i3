@@ -502,24 +502,53 @@ static Con *con_descend_at_coords(Con *con, int16_t x, int16_t y) {
     return con_descend_at_coords(TAILQ_FIRST(&(con->focus_head)), x, y);
 }
 
-/* Returns the container a seat with its pointer at (x, y) should focus on
- * `workspace`: whatever window (floating or tiling) is under that point, or
- * the workspace's regular focus target if the point is not actually on
- * `workspace` (e.g. the pointer query raced with the switch) or it is empty.
- */
-static Con *workspace_focus_at(Con *workspace, int16_t x, int16_t y) {
-    if (!rect_contains(workspace->rect, x, y)) {
-        return con_descend_focused(workspace);
+/* Returns where on the screen the seat currently stands, which is what
+ * decides where it lands when another workspace is shown. Two positions can
+ * claim to be that spot: the seat's pointer and the window it focuses. The
+ * window wins, because it is the one the seat actually works in and the only
+ * one that keyboard focus commands move - the pointer is warped along only
+ * when focus changes output (see x_set_warp_to()), so after a `focus right`
+ * it is stale. The pointer is used when the seat focuses no window at all
+ * (an empty workspace, or a container-level focus). */
+static bool seat_position(Seat *seat, int16_t *x, int16_t *y) {
+    Con *f = seat->focused;
+    if (f != NULL && f->window != NULL && f->rect.width > 0 && f->rect.height > 0) {
+        *x = f->rect.x + (f->rect.width / 2);
+        *y = f->rect.y + (f->rect.height / 2);
+        return true;
     }
-    return con_descend_at_coords(workspace, x, y);
+    return seat_query_pointer(seat, x, y);
+}
+
+/*
+ * Returns the container the seat should focus on `workspace` once it is
+ * shown: the window (floating or tiling) at the spot the seat stands on,
+ * see seat_position(). Falls back to the workspace's regular focus target
+ * when that spot is not on `workspace` at all - the seat stands on another
+ * output - or when the workspace is empty.
+ *
+ */
+Con *seat_workspace_focus_target(Seat *seat, Con *workspace) {
+    /* A fullscreen window covers everything below it, so it is what the
+     * seat stands on wherever exactly that is. */
+    Con *fullscreen = con_get_fullscreen_con(workspace, CF_OUTPUT);
+    if (fullscreen != NULL) {
+        return con_descend_focused(fullscreen);
+    }
+
+    int16_t x, y;
+    if (seat_position(seat, &x, &y) && rect_contains(workspace->rect, x, y)) {
+        return con_descend_at_coords(workspace, x, y);
+    }
+    return con_descend_focused(workspace);
 }
 
 /*
  * Called by workspace_show() once a new workspace is shown on an output:
  * every other seat whose focus lived on the now hidden workspace (i.e. was
- * also watching that output) gets pointed at the window under its own
- * pointer on the new workspace, rather than wherever the requesting seat
- * ended up.
+ * also watching that output) gets pointed at the window at the spot it
+ * stands on (see seat_workspace_focus_target()), rather than wherever the
+ * requesting seat ended up.
  *
  */
 void seat_workspace_shown(Con *old_ws, Con *workspace) {
@@ -535,15 +564,8 @@ void seat_workspace_shown(Con *old_ws, Con *workspace) {
         if (con_get_workspace(seat->focused) != old_ws) {
             continue;
         }
-        Con *next = NULL;
-        int16_t x, y;
-        if (seat_query_pointer(seat, &x, &y)) {
-            next = workspace_focus_at(workspace, x, y);
-        }
-        if (next == NULL) {
-            next = con_descend_focused(workspace);
-        }
-        DLOG("seat \"%s\": workspace %s got hidden, following to %p / %s under its own pointer\n",
+        Con *next = seat_workspace_focus_target(seat, workspace);
+        DLOG("seat \"%s\": workspace %s got hidden, following to %p / %s at the spot it stands on\n",
              seat->name, old_ws->name, next, next->name);
         seat->focused = next;
         seat->focused_id = XCB_NONE;

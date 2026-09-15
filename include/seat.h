@@ -273,11 +273,21 @@ void seat_repair_focus(Seat *seat);
 void seat_con_closing(Con *con);
 
 /**
+ * Returns the container the seat should focus on `workspace` once it is
+ * shown: the window at the spot the seat stands on, i.e. where its own
+ * focused window is (or, lacking one, its pointer). Falls back to the
+ * workspace's regular focus target when that spot is not on `workspace`
+ * (the seat stands on another output) or the workspace is empty.
+ *
+ */
+Con *seat_workspace_focus_target(Seat *seat, Con *workspace);
+
+/**
  * Called by workspace_show() once a new workspace is shown on an output:
  * every other seat whose focus lived on the now hidden workspace (i.e. was
- * also watching that output) gets pointed at the window under its own
- * pointer on the new workspace, rather than wherever the requesting seat
- * ended up.
+ * also watching that output) gets pointed at the window at the spot it
+ * stands on (see seat_workspace_focus_target()), rather than wherever the
+ * requesting seat ended up.
  *
  */
 void seat_workspace_shown(Con *old_ws, Con *workspace);
