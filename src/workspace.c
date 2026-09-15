@@ -525,7 +525,7 @@ void workspace_show(Con *workspace) {
     }
     /* `old` is the workspace itself when it was already visible on its output. */
     if (old != workspace) {
-        seat_workspace_hidden(old, next);
+        seat_workspace_shown(old, workspace);
     }
 
     ipc_send_workspace_event("focus", workspace, current);

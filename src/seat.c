@@ -470,15 +470,81 @@ void seat_repair_focus(Seat *seat) {
         if (owned != NULL) {
             next = seat_visible_focus_on_output(owned);
         }
-    } else if (!workspace_is_visible(ws)) {
+    } else if (con_is_internal(output)) {
         /* A window moved to the scratchpad lives on the internal output;
          * follow whoever moved it instead. */
-        next = con_is_internal(output) ? focused : seat_visible_focus_on_output(output);
+        next = focused;
     }
 
     if (next != NULL && next != f) {
         DLOG("seat \"%s\": focus %p / %s is not usable anymore, re-pointing to %p / %s\n",
              seat->name, f, f->name, next, next->name);
+        seat->focused = next;
+        seat->focused_id = XCB_NONE;
+    }
+}
+
+/* Returns the descendant of `con` at (x, y): the child whose rect contains
+ * the point, recursively. Tabbed/stacked children all share the same rect,
+ * so the first match (the active tab, per con_focus()'s focus_head order)
+ * wins there as everywhere else. Falls back to the regular focus order when
+ * the point does not land on any child (e.g. a gap or border). */
+static Con *con_descend_at_coords(Con *con, int16_t x, int16_t y) {
+    if (TAILQ_EMPTY(&(con->focus_head))) {
+        return con;
+    }
+    Con *child;
+    TAILQ_FOREACH (child, &(con->focus_head), focused) {
+        if (rect_contains(child->rect, x, y)) {
+            return con_descend_at_coords(child, x, y);
+        }
+    }
+    return con_descend_at_coords(TAILQ_FIRST(&(con->focus_head)), x, y);
+}
+
+/* Returns the container a seat with its pointer at (x, y) should focus on
+ * `workspace`: whatever window (floating or tiling) is under that point, or
+ * the workspace's regular focus target if the point is not actually on
+ * `workspace` (e.g. the pointer query raced with the switch) or it is empty.
+ */
+static Con *workspace_focus_at(Con *workspace, int16_t x, int16_t y) {
+    if (!rect_contains(workspace->rect, x, y)) {
+        return con_descend_focused(workspace);
+    }
+    return con_descend_at_coords(workspace, x, y);
+}
+
+/*
+ * Called by workspace_show() once a new workspace is shown on an output:
+ * every other seat whose focus lived on the now hidden workspace (i.e. was
+ * also watching that output) gets pointed at the window under its own
+ * pointer on the new workspace, rather than wherever the requesting seat
+ * ended up.
+ *
+ */
+void seat_workspace_shown(Con *old_ws, Con *workspace) {
+    if (old_ws == NULL) {
+        return;
+    }
+    seat_store_current();
+    Seat *seat;
+    TAILQ_FOREACH (seat, &seats, seats) {
+        if (seat == current_seat || seat->focused == NULL) {
+            continue;
+        }
+        if (con_get_workspace(seat->focused) != old_ws) {
+            continue;
+        }
+        Con *next = NULL;
+        int16_t x, y;
+        if (seat_query_pointer(seat, &x, &y)) {
+            next = workspace_focus_at(workspace, x, y);
+        }
+        if (next == NULL) {
+            next = con_descend_focused(workspace);
+        }
+        DLOG("seat \"%s\": workspace %s got hidden, following to %p / %s under its own pointer\n",
+             seat->name, old_ws->name, next, next->name);
         seat->focused = next;
         seat->focused_id = XCB_NONE;
     }
@@ -501,26 +567,6 @@ void seat_con_closing(Con *con) {
         Con *next = con_next_focused(con);
         focused = saved;
         DLOG("seat \"%s\": focused con %p is closing, next = %p\n", seat->name, con, next);
-        seat->focused = next;
-        seat->focused_id = XCB_NONE;
-    }
-}
-
-void seat_workspace_hidden(Con *old_ws, Con *next) {
-    if (old_ws == NULL) {
-        return;
-    }
-    seat_store_current();
-    Seat *seat;
-    TAILQ_FOREACH (seat, &seats, seats) {
-        if (seat == current_seat || seat->focused == NULL) {
-            continue;
-        }
-        if (con_get_workspace(seat->focused) != old_ws) {
-            continue;
-        }
-        DLOG("seat \"%s\": workspace %s got hidden, following to %p / %s\n",
-             seat->name, old_ws->name, next, next->name);
         seat->focused = next;
         seat->focused_id = XCB_NONE;
     }
