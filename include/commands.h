@@ -379,6 +379,13 @@ void cmd_seat_output(I3_CMD, const char *seat, const char *output);
 void cmd_seat_focus(I3_CMD, const char *seat, const char *mode);
 
 /**
+ * Implementation of 'seat <name> clicks confined|unconfined|toggle' (mode is
+ * the whole phrase, e.g. "clicks toggle").
+ *
+ */
+void cmd_seat_clicks(I3_CMD, const char *seat, const char *mode);
+
+/**
  * Implementation of 'seat <name> remove'.
  *
  */

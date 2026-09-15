@@ -539,12 +539,13 @@ state BAR:
 # seat <name> input <master> [<master> …]
 # seat <name> output all|<output> [<output> …]
 # seat <name> focus enabled|disabled|toggle
+# seat <name> clicks confined|unconfined|toggle
 # seat <name> remove
 state SEAT:
   seat = word
       -> SEAT_ACTION
 
-# The focus switch is matched as a whole phrase so that e.g.
+# The focus and clicks switches are matched as whole phrases so that e.g.
 # `seat foo focus left` still runs the `focus left` command as foo.
 state SEAT_ACTION:
   'input'
@@ -553,6 +554,8 @@ state SEAT_ACTION:
       -> SEAT_OUTPUT
   mode = 'focus enabled', 'focus disabled', 'focus toggle'
       -> call cmd_seat_focus($seat, $mode)
+  clicks_mode = 'clicks confined', 'clicks unconfined', 'clicks toggle'
+      -> call cmd_seat_clicks($seat, $clicks_mode)
   'remove'
       -> call cmd_seat_remove($seat)
   end

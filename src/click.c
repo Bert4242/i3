@@ -194,6 +194,19 @@ static void route_click(Con *con, xcb_button_press_event_t *event, const click_d
     DLOG("--> OUTCOME = %p\n", con);
     DLOG("type = %d, name = %s\n", con->type, con->name);
 
+    Seat *seat = seat_for_device(deviceid);
+    if (!seat_may_click_output(seat, con_get_output(con))) {
+        DLOG("Swallowing click, seat \"%s\" (device %d) may not click on this output\n",
+             seat->name, deviceid);
+        if (xinput_supported) {
+            xcb_input_xi_allow_events(conn, event->time, deviceid, XCB_INPUT_EVENT_MODE_ASYNC_DEVICE, XCB_NONE, XCB_NONE);
+        } else {
+            xcb_allow_events(conn, XCB_ALLOW_ASYNC_POINTER, event->time);
+        }
+        xcb_flush(conn);
+        return;
+    }
+
     /* don’t handle dockarea cons, they must not be focused */
     if (con->parent->type == CT_DOCKAREA) {
         allow_replay_pointer(event->time, deviceid);
@@ -413,6 +426,26 @@ void handle_button_press(xcb_button_press_event_t *event, xcb_input_device_id_t 
     }
 
     if (!(con = con_by_frame_id(event->event))) {
+        /* Find the output the click landed on, if any, so a seat confined to
+         * other outputs cannot act on the empty desktop background here
+         * either (see seat_may_click_output). */
+        Con *clicked_output = NULL;
+        if (event->event == root) {
+            Con *output;
+            TAILQ_FOREACH (output, &(croot->nodes_head), nodes) {
+                if (con_is_internal(output) ||
+                    !rect_contains(output->rect, event->event_x, event->event_y)) {
+                    continue;
+                }
+                clicked_output = output;
+                break;
+            }
+            if (clicked_output != NULL && !seat_may_click_output(seat_for_device(deviceid), clicked_output)) {
+                DLOG("Swallowing root click, seat (device %d) may not click on this output\n", deviceid);
+                return;
+            }
+        }
+
         /* Run bindings on the root window as well, see #2097. We only run it
          * if --whole-window was set as that's the equivalent for a normal
          * window. */
@@ -427,19 +460,12 @@ void handle_button_press(xcb_button_press_event_t *event, xcb_input_device_id_t 
         /* If the root window is clicked, find the relevant output from the
          * click coordinates and focus the output's active workspace. */
         if (event->event == root && event->response_type == XCB_BUTTON_PRESS) {
-            Con *output;
-            TAILQ_FOREACH (output, &(croot->nodes_head), nodes) {
-                if (con_is_internal(output) ||
-                    !rect_contains(output->rect, event->event_x, event->event_y)) {
-                    continue;
-                }
-
-                Con *ws = TAILQ_FIRST(&(output_get_content(output)->focus_head));
+            if (clicked_output != NULL) {
+                Con *ws = TAILQ_FIRST(&(output_get_content(clicked_output)->focus_head));
                 if (ws != con_get_workspace(focused)) {
                     workspace_show(ws);
                     tree_render();
                 }
-                return;
             }
             return;
         }

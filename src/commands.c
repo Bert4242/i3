@@ -2707,6 +2707,30 @@ void cmd_seat_focus(I3_CMD, const char *seat, const char *mode) {
 }
 
 /*
+ * Implementation of 'seat <name> clicks confined|unconfined|toggle'.
+ *
+ */
+void cmd_seat_clicks(I3_CMD, const char *seat, const char *mode) {
+    Seat *target = seat_by_name(seat);
+    if (target == NULL) {
+        yerror("No such seat: %s", seat);
+        return;
+    }
+
+    bool confine;
+    if (strcmp(mode, "clicks toggle") == 0) {
+        confine = !target->clicks_confined;
+    } else {
+        confine = (strcmp(mode, "clicks confined") == 0);
+    }
+
+    DLOG("Seat \"%s\": clicks %s\n", target->name, confine ? "confined" : "unconfined");
+    target->clicks_confined = confine;
+    ipc_send_seat_event("clicks", target);
+    ysuccess(true);
+}
+
+/*
  * Implementation of 'seat <name> remove'.
  *
  */

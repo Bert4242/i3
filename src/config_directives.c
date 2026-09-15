@@ -655,6 +655,15 @@ CFGFUN(seat_focus, const char *seat, const char *value) {
     DLOG("Seat \"%s\": focus %s\n", target->name, target->focus_enabled ? "enabled" : "disabled");
 }
 
+CFGFUN(seat_clicks, const char *seat, const char *value) {
+    Seat *target = cfg_seat_get(seat);
+    if (target == NULL) {
+        return;
+    }
+    target->clicks_confined = (strcasecmp(value, "unconfined") != 0);
+    DLOG("Seat \"%s\": clicks %s\n", target->name, target->clicks_confined ? "confined" : "unconfined");
+}
+
 CFGFUN(ipc_socket, const char *path) {
     free(config.ipc_socket_path);
     config.ipc_socket_path = sstrdup(path);

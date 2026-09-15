@@ -1403,6 +1403,16 @@ restriction is kept for when focus is enabled again). Two seats may focus the
 same window, in which case both of their inputs reach it; when a seat is
 removed, the other seats keep their focus.
 
+Also independently, a seat restricted to some outputs can have its
+clicks confined to them: with clicks confined (the default once an
++output+ line is given), a click, scroll, floating_modifier drag/resize, or
+click-binding on an output the seat does not own has no effect at all — it
+is not delivered to the client and i3 does not act on it, including clicks
+on the empty desktop background of that output. With clicks unconfined, the
+seat's pointer works on every output regardless of the output restriction
+(only focus is withheld there). Click confinement has no effect on a seat
+that has no +output+ restriction.
+
 The window layout itself is shared: the last seat to act decides which
 workspace an output shows and which tab is visible. If another seat hides the
 workspace a seat was working on, that seat follows to the newly shown
@@ -1413,6 +1423,7 @@ workspace, since an unmapped window cannot hold keyboard focus.
 seat <name> input <master> [<master> …]
 seat <name> output all|<output> [<output> …]
 seat <name> focus enabled|disabled
+seat <name> clicks confined|unconfined
 -------------------------------------------------
 
 +<master>+ is the name given to +xinput create-master+ (i3 resolves
@@ -1420,6 +1431,8 @@ seat <name> focus enabled|disabled
 core pair. Master devices may appear or disappear at any time, i3 picks them
 up when they do. Without an +output+ line, a seat may focus every output.
 Focus is enabled by default; it cannot be disabled for the +default+ seat.
+Clicks are confined by default (see above); this only matters once an
++output+ line restricts the seat.
 
 *Examples*:
 -------------------------------------------------
@@ -1427,9 +1440,13 @@ Focus is enabled by default; it cannot be disabled for the +default+ seat.
 seat touch input touch
 seat touch focus disabled
 
-# A second user with their own keyboard and mouse on the second monitor
+# A second user with their own keyboard and mouse on the second monitor;
+# their clicks are confined to that monitor by default
 seat guest input guest
 seat guest output HDMI-2
+
+# The guest may still click through onto the primary user's monitor
+seat guest clicks unconfined
 -------------------------------------------------
 
 Seats can also be changed at runtime:
@@ -1441,6 +1458,7 @@ seat <name> <command>
 seat <name> input <master> [<master> …]
 seat <name> output all|<output> [<output> …]
 seat <name> focus enabled|disabled|toggle
+seat <name> clicks confined|unconfined|toggle
 seat <name> remove
 -------------------------------------------------
 
@@ -1448,8 +1466,9 @@ Commands sent via IPC run as the seat which most recently produced input;
 +seat <name>+ makes the rest of the command string run as +<name>+ instead,
 and +seat <name> <command>+ runs a single command as that seat (+seat <name>
 focus left+ therefore runs the +focus left+ command, while +seat <name> focus
-enabled|disabled|toggle+ is the focus switch). +seat <name> remove+ hands the
-seat's devices back to the default seat.
+enabled|disabled|toggle+ is the focus switch and +seat <name> clicks
+confined|unconfined|toggle+ the click-confinement switch). +seat <name>
+remove+ hands the seat's devices back to the default seat.
 
 *Examples*:
 -------------------------------------------------
@@ -1457,6 +1476,7 @@ i3-msg 'seat guest focus left'
 i3-msg 'seat guest; workspace 3; exec xterm'
 i3-msg 'seat guest input guest; seat guest output HDMI-2'
 i3-msg 'seat touch focus toggle'
+i3-msg 'seat guest clicks toggle'
 i3-msg 'seat guest remove'
 -------------------------------------------------
 

@@ -362,12 +362,16 @@ state WORKSPACE_OUTPUT_WORD:
 # seat <name> input <master> [<master> …]
 # seat <name> output all|<output> [<output> …]
 # seat <name> focus enabled|disabled
+# seat <name> clicks confined|unconfined
 #
 # Declares a multiseat seat: a group of `xinput create-master` pairs (each
 # <master> is the create-master name, "core" being the Virtual core pair)
 # which has its own focus. Without an output line a seat may focus windows
 # on every output. With focus disabled, the seat's pointer never changes
-# focus and its keyboards follow the default seat.
+# focus and its keyboards follow the default seat. With clicks confined
+# (the default once an output line restricts the seat), the seat's
+# clicks/scroll/drags/click-bindings have no effect at all on outputs it
+# does not own; with clicks unconfined they pass through as if unrestricted.
 state SEAT:
   seat = word
       -> SEAT_ACTION
@@ -379,10 +383,16 @@ state SEAT_ACTION:
       -> SEAT_OUTPUT_WORD
   'focus'
       -> SEAT_FOCUS
+  'clicks'
+      -> SEAT_CLICKS
 
 state SEAT_FOCUS:
   value = word
       -> call cfg_seat_focus($seat, $value)
+
+state SEAT_CLICKS:
+  value = word
+      -> call cfg_seat_clicks($seat, $value)
 
 state SEAT_INPUT_WORD:
   input = word

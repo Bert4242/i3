@@ -52,6 +52,15 @@ typedef struct Seat {
      * the output scope below is kept for when focus is enabled again. */
     bool focus_enabled;
 
+    /** Whether the seat's pointer/button activity (clicks, scroll,
+     * floating_modifier drags, click-bindings, and clicks on the empty
+     * desktop background) is confined to the outputs in `outputs`
+     * (default: yes). Only has an effect when output_mode is
+     * SEAT_OUTPUTS_NAMED; unlike focus_enabled, this never withholds
+     * focus by itself, only the click/button event on outputs the seat
+     * does not own. */
+    bool clicks_confined;
+
     seat_output_mode_t output_mode;
     SLIST_HEAD(seat_outputs_head, output_name) outputs;
 
@@ -229,6 +238,14 @@ bool seat_owns_output(Seat *seat, Con *output);
  *
  */
 bool seat_may_focus(Seat *seat, Con *con);
+
+/**
+ * Returns true if the seat's pointer/button activity may act on the given
+ * output container (CT_OUTPUT): always true unless the seat has
+ * clicks_confined set and does not own the output (see clicks_confined).
+ *
+ */
+bool seat_may_click_output(Seat *seat, Con *output_con);
 
 /**
  * Returns true if the seat has focus disabled (see focus_enabled).

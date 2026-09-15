@@ -946,6 +946,14 @@ focus_enabled (boolean)::
 	Whether the seat may focus windows at all (+seat <name> focus
 	enabled|disabled+). With focus disabled, the seat never changes focus
 	and its keyboards follow the default seat.
+clicks_confined (boolean)::
+	Whether the seat's pointer/button activity (clicks, scroll wheel,
+	floating_modifier drag/resize initiation, click-bindings, and clicks
+	on the empty desktop background) is confined to the outputs it owns
+	(+seat <name> clicks confined|unconfined+). Only has an effect when
+	+outputs+ below is a restricted list rather than +"all"+; unlike
+	+focus_enabled+, this only withholds the click/button event itself on
+	outputs the seat does not own, not focus.
 inputs (array of map)::
 	The master device pairs of the seat: +name+ (string) is the
 	+xinput create-master+ name (or +core+), +pointer+ and +keyboard+
@@ -966,6 +974,7 @@ workspace (string)::
  {
   "name": "default",
   "focus_enabled": true,
+  "clicks_confined": true,
   "inputs": [ { "name": "core", "pointer": 2, "keyboard": 3 } ],
   "outputs": "all",
   "focused": 94133390560720,
@@ -974,6 +983,7 @@ workspace (string)::
  {
   "name": "touch",
   "focus_enabled": false,
+  "clicks_confined": true,
   "inputs": [ { "name": "touch", "pointer": 12, "keyboard": 13 } ],
   "outputs": [ "DP-1-1" ],
   "focused": 94133390560720,
@@ -1273,6 +1283,7 @@ This event consists of a single serialized map containing a property
 * +input+ – the seat's inputs changed
 * +output+ – the seat's outputs changed
 * +focus+ – the seat's focus was enabled or disabled
+* +clicks+ – the seat's click confinement was enabled or disabled
 * +devices+ – master devices appeared or disappeared, so the device ids of
   the seats' inputs may have changed
 
@@ -1288,6 +1299,7 @@ re-request GET_SEATS after any seat event.
  "seat": {
   "name": "touch",
   "focus_enabled": true,
+  "clicks_confined": true,
   "inputs": [ { "name": "touch", "pointer": 12, "keyboard": 13 } ],
   "outputs": "all",
   "focused": 94133390560720,

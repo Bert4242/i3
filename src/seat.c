@@ -81,6 +81,7 @@ Seat *seat_new(struct seats_head *list, const char *name) {
     TAILQ_INIT(&(seat->inputs));
     SLIST_INIT(&(seat->outputs));
     seat->focus_enabled = true;
+    seat->clicks_confined = true;
     seat->output_mode = SEAT_OUTPUTS_ALL;
     TAILQ_INSERT_TAIL(list, seat, seats);
     return seat;
@@ -171,6 +172,7 @@ static void seat_copy_config(Seat *to, Seat *from) {
     }
 
     to->focus_enabled = from->focus_enabled;
+    to->clicks_confined = from->clicks_confined;
     seat_set_output_mode(to, from->output_mode);
     struct output_name *output;
     SLIST_FOREACH (output, &(from->outputs), names) {
@@ -407,6 +409,13 @@ bool seat_may_focus(Seat *seat, Con *con) {
         return true;
     }
     return seat_owns_output(seat, con_get_output(con));
+}
+
+bool seat_may_click_output(Seat *seat, Con *output_con) {
+    if (!seat->clicks_confined) {
+        return true;
+    }
+    return seat_owns_output(seat, output_con);
 }
 
 /*
