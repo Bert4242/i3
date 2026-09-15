@@ -555,6 +555,7 @@ my $expected_all_tokens = "ERROR: CONFIG: Expected one of these tokens: <end>, '
         restart_state
         popup_during_fullscreen
 	tiling_drag
+        seat
         exec_always
         exec
         client.background

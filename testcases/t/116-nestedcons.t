@@ -66,6 +66,7 @@ my $expected = {
     last_split_layout => 'splith',
     scratchpad_state => 'none',
     focus => $ignore,
+    seats => $ignore,
     focused => JSON::XS::false,
     urgent => JSON::XS::false,
     border => 'normal',

@@ -185,6 +185,7 @@ is(parser_calls('unknown_literal'),
        mode
        bar
        gaps
+       seat
     )) . "'\n" .
    "ERROR: Your command: unknown_literal\n" .
    "ERROR:               ^^^^^^^^^^^^^^^",
