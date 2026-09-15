@@ -239,6 +239,13 @@ typedef struct {
     uint32_t length;
 } generic_x11_reply_t;
 
+/* Events are 32 bytes, except GenericEvent (code 35, from the XGE extension),
+ * which carries `length` additional 4-byte units after the 32-byte header —
+ * see https://www.x.org/releases/current/doc/xextproto/geproto.html. XInput2
+ * delivers all of its events this way, so a proxy which assumes 32 bytes here
+ * loses the tail and desynchronizes the stream for good. */
+#define X11_GE_GENERIC 35
+
 static void read_client_x11_packet_cb(EV_P_ ev_io *w, int revents) {
     struct connstate *connstate = (struct connstate *)w->data;
 
@@ -341,6 +348,14 @@ static void read_server_x11_packet_cb(EV_P_ ev_io *w, int revents) {
                 return;
             }
 
+            break;
+
+        case X11_GE_GENERIC:  // GenericEvent, may be longer than 32 bytes
+            len += ((generic_x11_reply_t *)packet)->length * 4;
+            if (len > 32) {
+                packet = srealloc(packet, len);
+                must_read(readall_into(packet + 32, len - 32, connstate->serverw->fd));
+            }
             break;
 
         default:  // event
