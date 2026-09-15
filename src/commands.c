@@ -2591,6 +2591,16 @@ void cmd_seat_select(I3_CMD, const char *seat) {
  *
  */
 void cmd_seat_run(I3_CMD, const char *seat, const char *command) {
+    /* `seat a seat a seat a …` nests one parse_command() per `seat`, so cap
+     * how deep an IPC client can drive that. Nesting more than a couple of
+     * levels has no use: the innermost `seat` decides who runs the command. */
+    static int nesting = 0;
+    if (nesting >= 10) {
+        ELOG("Refusing to nest `seat <name> <command>` more than 10 levels deep\n");
+        yerror("`seat %s <command>` nested too deeply", seat);
+        return;
+    }
+
     Seat *target = seat_by_name(seat);
     if (target == NULL) {
         yerror("No such seat: %s", seat);
@@ -2600,7 +2610,9 @@ void cmd_seat_run(I3_CMD, const char *seat, const char *command) {
     /* The nested command may remove the seat we started from. */
     char *previous_name = sstrdup(current_seat->name);
     seat_make_current(target);
+    nesting++;
     CommandResult *result = parse_command(command, NULL, cmd_output->client);
+    nesting--;
     Seat *previous = seat_by_name(previous_name);
     seat_make_current(previous != NULL ? previous : default_seat);
     free(previous_name);
